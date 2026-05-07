@@ -206,16 +206,22 @@ Padrão obrigatório (segue ssh.go ou fail2ban.go como template):
 Sequência quando `sudo lsm` corre e `/etc/lsm/config.yaml` não existe
 (invocação tem de ser admin):
 
-1. **System update**: `apt update + upgrade + autoremove + autoclean +
-   needrestart -r a -m a -q`. Apanha kernel/lib patches antes de
-   configurar firewall/ssh.
-2. Se `RebootRequired()` → prompt 3-way (now / 04:00 / defer). Em
+1. **System update**: `apt update + upgrade + autoremove + autoclean`,
+   com `needrestart` em modo list-only (drop-in em
+   `/etc/needrestart/conf.d/99-lsm.conf` impede o dialog interativo
+   "Which services should be restarted?"). Detecção via
+   `needrestart -b -p` + `/var/run/reboot-required`. Reinício de
+   serviços individuais NUNCA é feito inline (risco de matar a sessão
+   sshd).
+2. Se há reboot pendente → prompt 3-way (now / 04:00 / defer). Em
    qualquer escolha, lsm sai. Re-correr depois retoma daqui.
-3. Wizard (timezone, hostname, ssh user/port, docker user, política,
-   **lista de módulos opcionais**). SSH + firewall mandatory.
+3. Wizard (timezone — default `Etc/UTC` —, hostname, ssh user/port,
+   docker user, política `auto_open_ports`, **só docker como opt-in**).
+   firewall + ssh + sysctl + timesync + hostname + fail2ban + upgrades
+   são baseline (sempre true).
 4. `runAllModules()` respeitando `cfg.Modules.<X>` flags.
 5. Prompt: ativar auto-launch do menu para o ssh.user (escreve bloco
-   marcado em `~/.bash_profile`).
+   marcado em `~/.profile`, NÃO em `.bash_profile` — ver secção 14).
 
 `runMenu()` só lá vai parar quando config existe — caso contrário entra
 em bootstrap.
@@ -228,7 +234,7 @@ em bootstrap.
 | 2 | `timesync` | `set-timezone` + `set-ntp true` + enable timesyncd | `timezone` |
 | 3 | `sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` + `sysctl --system` | — (hardcoded) |
 | 4 | `hostname` | `hostnamectl` + atualiza `/etc/hosts` | `hostname`, `fqdn` (skip se vazio) |
-| 5 | `ssh` | Cria user **fora do grupo sudo** (operator-only), grava `/etc/sudoers.d/lsm` com NOPASSWD restrito (`validate` / `update-server` / `timesync status`), hardening sshd, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
+| 5 | `ssh` | Cria user **fora do grupo sudo** (operator-only), grava `/etc/sudoers.d/lsm` com NOPASSWD em `/usr/sbin/lsm` (gate é em-app via `RequireAdmin`), hardening via drop-in `/etc/ssh/sshd_config.d/99-lsm.conf` validado com `sshd -t`, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
 | 6 | `docker` | Remove conflitos, install Docker CE, rootless setup user dedicado | `docker.rootless_user` |
 | 7 | `fail2ban` | Install, escreve `jail.local` (port=ssh.port, ignoreip = `ufw.SpecificSources` da porta SSH) | `ssh.port` |
 | 8 | `upgrades` | Install + escreve `20auto-upgrades` + enable service | — |
@@ -237,9 +243,19 @@ Cada módulo regista-se em `state.yaml::installed_modules` após sucesso.
 `validate` só faz checks contra módulos com flag — outros aparecem como `[--]`.
 
 Comandos não-modulares:
-- `lsm update-server` — `apt update + upgrade + autoremove + autoclean`,
-  com `needrestart` para auto-restart de serviços. Detecta reboot pendente
-  e oferece: agora / amanhã 04:00 (`systemd-run --on-calendar`) / adiar.
+- `lsm system update` — `apt update + upgrade + autoremove + autoclean`.
+  needrestart fica em **list-only** (drop-in `/etc/needrestart/conf.d/99-lsm.conf`):
+  nunca reinicia serviços inline. Após upgrade detecta serviços/kernel/microcode
+  pendentes via `needrestart -b -p` + `/var/run/reboot-required`. Se algo
+  precisa atenção, oferece: reboot agora / agendar 04:00 (`systemd-run
+  --on-calendar`) / adiar.
+- `lsm system reboot` — atalho directo p/ prompt 3-way de reboot.
+- `lsm update-server` — alias hidden p/ `system update` (compat).
+- `lsm status [--live]` — host metrics (CPU% + clock avg/max/aggregate via
+  `/sys/devices/system/cpu/*/cpufreq` ou `/proc/cpuinfo` fallback, RAM, disk
+  per-fs via `df`, network rate per-NIC via `/proc/net/dev`). `--live` faz
+  refresh 2s; sair com `q`/`x`/`Esc`/`Enter`/`Ctrl+C` (stty raw poll, sem
+  goroutines órfãs). Operator-class.
 
 Sub-cmds especiais:
 - `lsm timesync sync` — força re-sync (restart timesyncd)
@@ -281,21 +297,30 @@ Flags globais:
 
 Dois papéis. Decididos em runtime, não persistidos.
 
-- **admin** = real root login. Detetado por `uid==0 && $SUDO_USER == ""`.
-  Caminho típico: cloud console / IPMI / `su -` com password do root.
-  Pode tudo (init, ssh, docker, firewall, add-ip, remove-ip, all, ...).
+- **admin** = real root. `uid==0 && ($SUDO_USER == "" || $SUDO_USER == "root")`.
+  Caminho típico: cloud console / IPMI / `su -` com password do root /
+  root invocando `sudo lsm` (idempotente, sudo seta SUDO_USER=root).
+  Pode tudo (init, ssh, docker, firewall, ip, port, all, ...).
 - **operator** = `sudo lsm` invocado de user não-root (ex: dev24).
-  `$SUDO_USER` está definido. Só pode: `validate`, `update-server`,
-  `timesync status`, `ver overview`. Tudo o resto é rejeitado por
-  `RequireAdmin()` em `cmd/root.go`.
+  `$SUDO_USER` é o user não-root. Só pode: `validate`, `system update`,
+  `system reboot`, `timesync status`, `status`, `port list`, `network`
+  list/overview, e qualquer subcmd não destrutivo. Tudo o resto é
+  rejeitado por `RequireAdmin()` em `cmd/root.go`.
 
 `RequireAdmin()` está aplicado em: firewall, ssh, docker, fail2ban,
-upgrades, sysctl, hostname, init, add-ip, remove-ip. Operator-class
-cmds usam só `runner.RequireRoot()`.
+upgrades, sysctl, hostname, init, add-ip, remove-ip, port add/remove/
+allow/revoke. Operator-class cmds usam só `runner.RequireRoot()`.
 
 dev24 (ou seja qual for `ssh.user`) **NÃO** está no grupo sudo. Único
-caminho de privilégio é via lsm sudoers drop-in scoped aos subcmds
-operator. Para destructive: precisa-se de root login de outra via.
+caminho de privilégio é via `/etc/sudoers.d/lsm` (NOPASSWD blanket em
+`/usr/sbin/lsm`) e a verificação em-app filtra por subcmd. Para
+operações destrutivas: real root login (não há atalho via sudo).
+
+Menu: navegação unificada com `x` (recua em submenus, sai no top-level —
+nunca há overlap p.q. submenu não tem ponto de saída e top-level não tem
+parent). `b`/`back`/`q`/`quit`/`exit` são aliases. Validate fundiu-se com
+"Check & Fix": uma só entrada que mostra o report e, se houver FAILs e
+caller for admin, oferece re-correr os módulos com falha.
 
 ## 11. Semântica da whitelist de IPs
 
@@ -388,7 +413,10 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 | `/etc/sysctl.d/99-lsm.conf` | sysctl tuning | lsm sysctl |
 | `/etc/fail2ban/jail.local` | jail config | lsm fail2ban |
 | `/etc/apt/apt.conf.d/20auto-upgrades` | unattended-upgrades periodic | lsm upgrades |
-| `/etc/sudoers.d/lsm` | NOPASSWD para `/usr/sbin/lsm` ao SSH user | lsm ssh |
+| `/etc/sudoers.d/lsm` | NOPASSWD blanket em `/usr/sbin/lsm` ao SSH user | lsm ssh |
+| `/etc/ssh/sshd_config.d/99-lsm.conf` | sshd Port + PermitRootLogin no + PasswordAuthentication yes | lsm ssh |
+| `/etc/needrestart/conf.d/99-lsm.conf` | needrestart em modo list-only (sem dialog interativo no apt) | lsm system update |
+| `/home/<ssh.user>/.profile` (bloco marcado) | auto-launch do menu no login interativo | lsm bootstrap |
 | `/usr/share/doc/lsm/README.md` | docs | dpkg |
 
 ---

@@ -155,17 +155,20 @@ func renderStatus(s statusSnap) {
 	fmt.Printf("║  Host status — %s — %-20s        ║\n", s.host, s.now)
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
 
-	// CPU
+	// CPU — capacity (static) on top, live status below.
 	fmt.Println()
-	fmt.Printf("CPU      %5.1f%%  on %d logical cores\n", cpuPct, s.cores)
-	fmt.Printf("         %s\n", bar(cpuPct, 50))
 	if s.freq.Source != "" {
-		fmt.Printf("         clock: avg %s / per-core max %s / aggregate max %s  (%s)\n",
-			formatMHz(s.freq.AvgCur),
+		fmt.Printf("CPU      %d logical cores · per-core max %s · aggregate max %s  (%s)\n",
+			s.cores,
 			formatMHz(s.freq.Max),
 			formatMHz(s.freq.MaxAggregate),
 			s.freq.Source)
+		fmt.Printf("         load %5.1f%%  ·  avg clock %s\n", cpuPct, formatMHz(s.freq.AvgCur))
+	} else {
+		fmt.Printf("CPU      %d logical cores\n", s.cores)
+		fmt.Printf("         load %5.1f%%\n", cpuPct)
 	}
+	fmt.Printf("         %s\n", bar(cpuPct, 50))
 
 	// Memory
 	fmt.Println()
