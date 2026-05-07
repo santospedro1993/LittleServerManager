@@ -61,11 +61,13 @@ func InstallEngine() error {
 	}
 	// systemd-container provides `machinectl`, used to run the rootless
 	// setup tool inside the rootless user's session.
+	// slirp4netns + fuse-overlayfs are runtime deps for rootless that
+	// docker-ce-rootless-extras stopped pulling explicitly on Debian 13.
 	return runner.Run("apt-get", "install", "-y", "-qq",
 		"docker-ce", "docker-ce-cli", "containerd.io",
 		"docker-buildx-plugin", "docker-compose-plugin",
 		"docker-ce-rootless-extras", "uidmap", "dbus-user-session",
-		"systemd-container")
+		"systemd-container", "slirp4netns", "fuse-overlayfs")
 }
 
 func DisableRootful() {
@@ -108,6 +110,19 @@ func SetupRootlessUser(name string) error {
 		if err := runner.Run("apt-get", "install", "-y", "-qq", "systemd-container"); err != nil {
 			return fmt.Errorf("install systemd-container: %w", err)
 		}
+	}
+	// slirp4netns / fuse-overlayfs: runtime deps do rootless que faltam em
+	// Debian 13 minimal. Sem isto dockerd-rootless.sh aborta com
+	// "One of slirp4netns ... needs to be installed".
+	if !runner.HasCommand("slirp4netns") {
+		runner.Log("slirp4netns em falta — a instalar.")
+		if err := runner.Run("apt-get", "install", "-y", "-qq", "slirp4netns"); err != nil {
+			return fmt.Errorf("install slirp4netns: %w", err)
+		}
+	}
+	if !runner.HasCommand("fuse-overlayfs") {
+		runner.Log("fuse-overlayfs em falta — a instalar.")
+		_ = runner.Run("apt-get", "install", "-y", "-qq", "fuse-overlayfs")
 	}
 
 	return runner.Run("machinectl", "shell", name+"@", "/bin/bash", "-c",
