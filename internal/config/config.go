@@ -91,6 +91,20 @@ func (c *Config) validate() error {
 	// firewall + ssh are mandatory regardless of what the file says.
 	c.Modules.Firewall = true
 	c.Modules.SSH = true
+	// Backward compat: configs written before the modules section existed
+	// have all optional flags zeroed (false) after unmarshal. Treat the
+	// "everything optional disabled" pattern as legacy and default it to
+	// "everything enabled" so old configs don't silently lose modules.
+	allOptionalFalse := !c.Modules.Sysctl && !c.Modules.Timesync && !c.Modules.Hostname &&
+		!c.Modules.Docker && !c.Modules.Fail2ban && !c.Modules.Upgrades
+	if allOptionalFalse {
+		c.Modules.Sysctl = true
+		c.Modules.Timesync = true
+		c.Modules.Hostname = true
+		c.Modules.Docker = true
+		c.Modules.Fail2ban = true
+		c.Modules.Upgrades = true
+	}
 	return nil
 }
 

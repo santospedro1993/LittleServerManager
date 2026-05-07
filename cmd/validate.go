@@ -96,13 +96,17 @@ func runValidate() (failedModules []string, fail int, err error) {
 			check(fmt.Sprintf("user '%s' exists", cfg.SSH.User), false, err.Error())
 		}
 
-		out, _ := runner.Capture("grep", "-E", "^Port ", "/etc/ssh/sshd_config")
+		// sshd -T dumps the effective config (main file + Include drop-ins).
+		// Falls back to grepping both files if sshd -T fails (rare, e.g.
+		// running as non-root which we already gated, or invalid config).
+		eff, _ := runner.Capture("sshd", "-T")
+		effLow := strings.ToLower(eff)
 		check(fmt.Sprintf("sshd Port = %d", cfg.SSH.Port),
-			strings.Contains(out, fmt.Sprintf("Port %d", cfg.SSH.Port)), strings.TrimSpace(out))
-
-		out, _ = runner.Capture("grep", "-E", "^PermitRootLogin", "/etc/ssh/sshd_config")
+			strings.Contains(effLow, fmt.Sprintf("port %d", cfg.SSH.Port)),
+			"")
 		check("sshd PermitRootLogin no",
-			strings.Contains(out, "PermitRootLogin no"), strings.TrimSpace(out))
+			strings.Contains(effLow, "permitrootlogin no"),
+			"")
 
 		if ufw.Installed() {
 			check(fmt.Sprintf("UFW allows SSH port %d/tcp", cfg.SSH.Port),

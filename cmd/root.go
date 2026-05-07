@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"lsm/internal/prompt"
 	"lsm/internal/runner"
 	"lsm/internal/state"
 )
@@ -56,8 +57,8 @@ func init() {
 // `sudo lsm <destructive>` from a non-root user (e.g. dev24) is rejected —
 // those flows must come from a root shell (console / IPMI / `su -` with
 // root password / direct SSH as root). Operator-class commands (validate,
-// update-server, timesync status, overview) bypass this and only need
-// RequireRoot.
+// system update, system reboot, status, port list, overview) bypass this
+// and only need RequireRoot.
 func RequireAdmin() error {
 	if err := runner.RequireRoot(); err != nil {
 		return err
@@ -66,7 +67,7 @@ func RequireAdmin() error {
 	if su == "" || su == "root" {
 		return nil
 	}
-	return fmt.Errorf("operação requer login direto como root (não via sudo). SUDO_USER=%s. Usa o console / IPMI ou `su -` com password do root.", su)
+	return fmt.Errorf("this operation requires direct root login (not via sudo). SUDO_USER=%s. Use the console / IPMI or `su -` with the root password", su)
 }
 
 // markInstalled records a successful module run in state.yaml.
@@ -82,21 +83,19 @@ func markInstalled(name string) {
 }
 
 // shouldOpen evaluates the auto_open_ports policy.
+// Uses prompt.Confirm so we share the single bufio.Reader on stdin —
+// fmt.Scanln would race with the buffered reader and lose input.
 func shouldOpen(desc, policy string) bool {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
 	case "true", "yes", "sim":
 		return true
 	case "false", "no", "nao", "não":
-		runner.Log("auto_open_ports=false → NÃO abrir %s", desc)
+		runner.Log("auto_open_ports=false → not opening %s", desc)
 		return false
 	default:
 		if yes {
 			return true
 		}
-		fmt.Printf("Abrir %s em UFW? [Y/n]: ", desc)
-		var ans string
-		fmt.Scanln(&ans)
-		ans = strings.ToLower(strings.TrimSpace(ans))
-		return ans != "n" && ans != "no" && ans != "nao"
+		return prompt.Confirm(fmt.Sprintf("Open %s in UFW?", desc), true)
 	}
 }

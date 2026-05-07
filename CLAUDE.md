@@ -244,6 +244,7 @@ Comandos não-modulares:
 Sub-cmds especiais:
 - `lsm timesync sync` — força re-sync (restart timesyncd)
 - `lsm timesync status` — `timedatectl status`
+- `lsm status [--live]` — host metrics (CPU/RAM/disk/network). Operator-class.
 
 ---
 
@@ -420,8 +421,45 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 ## 17. Próximos módulos planeados (por user)
 
 - **wireguard** — VPN. Config provável: peer config inline ou path para conf. Server ou client peer.
+- **container monitoring** — par do `lsm status` para containers do docker rootless. Ler cgroup v2 + `docker stats`. Filtrar por user docker24. Inclui CPU/RAM/disk-IO/net por container.
+- **ssh-keys** — deploy de `authorized_keys` + opção para deprecar PasswordAuth (`PasswordAuthentication no` no drop-in atual). Mais seguro que password.
+- **backup** — snapshot tar de `/etc/lsm/{config,state}.yaml` + UFW rules + sshd drop-in para recuperar config rapidamente.
 
 (Lista atualiza-se à medida que user pede.)
+
+---
+
+## 17b. TODO — bugs/melhorias notados em revisão (2026-05-07)
+
+Lista de coisas detetadas em full review pós-refactor. Não bloqueiam; correr quando houver tempo.
+
+### Bugs com risco real
+
+- [ ] **`portRevoke` reabre a TODOS automaticamente** quando o último IP específico sai E a porta não estava `Anywhere`. Se user adicionou via `port add --restrict` e revoga o último IP, ficaria fechado mas vamos reabrir. Footgun. Fix: detetar intent original via state.ManagedPort.RestrictMode ou perguntar antes de reabrir.
+- [ ] **Validate de managed ports não associa o FAIL ao módulo dono.** `currentModule = ""` antes do loop de portas. "Check & Fix" não pode reaplicar. Fix: associar SSH port → ssh module; portas custom → não auto-fix.
+- [ ] **Wizard não rejeita usernames perigosos** (`root`, users existentes em uso). Pode mexer em accounts não-lsm. Fix: validar contra `getent passwd` + lista de reserved.
+- [ ] **`fail2ban` validate só checka active**, não confirma jail SSH carregado. Pode estar "active" sem proteger nada. Fix: parse `fail2ban-client status sshd`.
+- [ ] **Auto-launch só funciona p/ bash**. Se shell do user for zsh/fish, `.profile` não é lido. Fix: sniff shell, escrever em `~/.zprofile` / `~/.config/fish/config.fish` consoante.
+- [ ] **`hostname.Apply` falha em containers** sem privilégio (LXC restrito, Docker host PID=1). `hostnamectl` retorna erro. Fix: try-fallback para `echo "$name" > /etc/hostname; hostname "$name"` se hostnamectl falhar.
+
+### Inconsistências / menores
+
+- [ ] **Logs PT misturados com EN** em `internal/{ufw,timesync,upgrades,fail2ban}` e `cmd/{ip,port,system,init}`. Translate.
+- [ ] **`runner.Capture` retorna combined output** (stdout+stderr). Algumas chamadas (ex: `grep`) podem ter stderr que polui o que esperamos como valor. Considerar `runner.CaptureStdout`.
+- [ ] **`runner.Run` log line não escapa args** com espaços (cosmético; comando real é seguro porque exec.Command separa args).
+- [ ] **Sysctl drop-in** `99-lsm.conf` não distingue IPv4-only hosts. `net.ipv6.conf.all.forwarding=1` em host puramente IPv4 falha sysctl com warning. Fix: detetar IPv6 e omitir se ausente.
+- [ ] **Docker `RunC`** removido em RemoveConflicts mas pode ser dep doutros pkgs. Adicionar `apt-get autoremove --simulate` antes de remove.
+- [ ] **Status NetRate** sample 800ms — bloqueia menu por isso. Pode mostrar primeiro valor "—" e reler.
+
+### Coisas a fazer / módulos
+
+- [ ] Adicionar **per-container status** ao `lsm status` (depois do MVP base).
+- [ ] Adicionar **wireguard** module (configurável ou peer-only).
+- [ ] Adicionar **ssh-keys** module (deploy authorized_keys + opção desligar PasswordAuth).
+- [ ] Adicionar **backup** subcmd (tar de config+state+ufw+sshd drop-in).
+- [ ] Considerar **`port add --restrict` registar intent** em `state.ManagedPort.OpenPolicy` (`open|restricted`) para `portRevoke` saber se reabre ou não.
+- [ ] Considerar adicionar `lsm doctor` que corre validate + dependency-check (machinectl, slirp4netns, fuse-overlayfs presentes, etc).
+- [ ] Adicionar suporte a IPv6 nas regras UFW (`ufw status` IPv6 entries são skipped agora; user pode querer add-ip de IPv6).
 
 ---
 

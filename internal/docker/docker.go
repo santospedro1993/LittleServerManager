@@ -8,13 +8,22 @@ import (
 	"lsm/internal/runner"
 )
 
+// conflicting is the set of distro-shipped or alternative docker stacks that
+// must not coexist with docker-ce. We deliberately do NOT include the
+// docker-ce* packages here — re-running the docker module on an already-
+// installed server would otherwise tear down a working engine before
+// reinstalling it, with the autoremove cascade potentially deleting state.
 var conflicting = []string{
-	"docker.io", "docker-ce", "docker-ce-cli", "containerd.io", "runc",
-	"docker-buildx-plugin", "docker-compose-plugin",
+	"docker.io", "docker-doc", "docker-compose",
 	"podman", "podman-compose",
+	"runc", // distro-shipped runc clashes with containerd.io's bundled one
 }
 
 func RemoveConflicts() error {
+	if runner.HasCommand("docker") {
+		runner.Log("docker engine present — skipping conflict-removal sweep.")
+		return nil
+	}
 	for _, p := range conflicting {
 		runner.TryRun("apt-get", "remove", "-y", p)
 	}
@@ -103,25 +112,26 @@ func SetupRootlessUser(name string) error {
 		return err
 	}
 
-	// machinectl pertence ao package systemd-container — pode faltar em
-	// instalações Debian minimal. Garante presente antes de chamar.
+	// machinectl ships with systemd-container — may be absent on minimal
+	// Debian. Install before we shell into the rootless user's session.
 	if !runner.HasCommand("machinectl") {
-		runner.Log("machinectl em falta — a instalar systemd-container.")
+		runner.Log("machinectl missing — installing systemd-container.")
 		if err := runner.Run("apt-get", "install", "-y", "-qq", "systemd-container"); err != nil {
 			return fmt.Errorf("install systemd-container: %w", err)
 		}
 	}
-	// slirp4netns / fuse-overlayfs: runtime deps do rootless que faltam em
-	// Debian 13 minimal. Sem isto dockerd-rootless.sh aborta com
-	// "One of slirp4netns ... needs to be installed".
+	// slirp4netns / fuse-overlayfs: rootless runtime deps that
+	// docker-ce-rootless-extras stopped pulling on Debian 13. Without
+	// these dockerd-rootless.sh aborts with "One of slirp4netns ...
+	// needs to be installed".
 	if !runner.HasCommand("slirp4netns") {
-		runner.Log("slirp4netns em falta — a instalar.")
+		runner.Log("slirp4netns missing — installing.")
 		if err := runner.Run("apt-get", "install", "-y", "-qq", "slirp4netns"); err != nil {
 			return fmt.Errorf("install slirp4netns: %w", err)
 		}
 	}
 	if !runner.HasCommand("fuse-overlayfs") {
-		runner.Log("fuse-overlayfs em falta — a instalar.")
+		runner.Log("fuse-overlayfs missing — installing.")
 		_ = runner.Run("apt-get", "install", "-y", "-qq", "fuse-overlayfs")
 	}
 

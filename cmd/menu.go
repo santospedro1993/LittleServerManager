@@ -33,6 +33,9 @@ func runMenu() error {
 		var actions []func() (ran bool, err error)
 
 		// always-available
+		labels = append(labels, "Status  →  CPU / RAM / disk / network (snapshot or --live)")
+		actions = append(actions, wrapSub(statusMenu))
+
 		labels = append(labels, "Validate setup")
 		actions = append(actions, wrap(func() error { _, _, e := runValidate(); return e }))
 
@@ -163,6 +166,35 @@ func wrap(fn func() error) func() (bool, error) {
 // outer loop should NOT pause after — that's why we return ran=false.
 func wrapSub(fn func() error) func() (bool, error) {
 	return func() (bool, error) { return false, fn() }
+}
+
+// statusMenu — host metrics. Read-only; available to admin + operator.
+func statusMenu() error {
+	for {
+		idx := prompt.ChooseEx("Status", []string{
+			"Snapshot (one-shot)",
+			"Live (refresh every 2s, Ctrl+C to exit)",
+		}, true, false)
+		switch idx {
+		case prompt.ChoiceBack:
+			return nil
+		case 1:
+			fmt.Println("─── output ─────────────────────────────────")
+			statusLive = false
+			if err := statusOnce(); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			fmt.Println("────────────────────────────────────────────")
+			prompt.Pause("")
+		case 2:
+			statusLive = true
+			err := statusLiveLoop()
+			statusLive = false
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+		}
+	}
 }
 
 // systemMenu — update + reboot. Available to both admin and operator.
