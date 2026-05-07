@@ -322,6 +322,49 @@ parent). `b`/`back`/`q`/`quit`/`exit` são aliases. Validate fundiu-se com
 "Check & Fix": uma só entrada que mostra o report e, se houver FAILs e
 caller for admin, oferece re-correr os módulos com falha.
 
+## 10c. Como correr containers (docker rootless)
+
+`cfg.Docker.RootlessUser` (default `docker24`) é o **único** user que tem
+acesso ao daemon docker. Socket vive em `/run/user/<uid>/docker.sock`,
+visível apenas dentro da sessão login desse user (systemd-logind seta
+`XDG_RUNTIME_DIR`).
+
+dev24 (operator) **não** corre containers — design intencional, isola
+admin de workloads. Para correr docker, três caminhos:
+
+1. **Como root, escalando para docker24** (recomendado p/ scripts):
+   ```bash
+   sudo -iu docker24 docker run hello-world
+   sudo -iu docker24 docker compose up -d
+   ```
+   `sudo -i` cria login shell, dispara o systemd user manager, popula
+   `XDG_RUNTIME_DIR` — `docker` cliente encontra socket sem mais nada.
+
+2. **SSH directo como docker24** (recomendado p/ uso interactivo):
+   - Ativar via `sudo passwd docker24` (lsm já pede password ao criar
+     user a partir desta versão; servidores antigos podem ter user
+     criado sem password — `passwd` resolve).
+   - Ou deploy de SSH key em `/home/docker24/.ssh/authorized_keys`.
+   - Login: `ssh -p 2210 docker24@<servidor>`.
+   - Após login: `docker run …` directo.
+
+3. **`su - docker24` a partir de root**:
+   ```bash
+   su - docker24
+   docker ps
+   ```
+   Equivalente ao `sudo -iu`.
+
+Notas:
+- `sudo docker` como root **falha** (DOCKER_HOST default aponta a
+  `/var/run/docker.sock` que está desativado). Tem de ser via login do
+  docker24 OU `DOCKER_HOST=unix:///run/user/$(id -u docker24)/docker.sock`
+  no env.
+- `docker compose` segue o mesmo padrão. Compose files podem viver em
+  `/home/docker24/stacks/<app>/compose.yaml`.
+- Para abrir porta de container ao mundo: `lsm port add <PORT>/tcp <LABEL>`
+  (root). Whitelist por IP via `lsm port allow ...`.
+
 ## 11. Semântica da whitelist de IPs
 
 **Source of truth = UFW**. Config NÃO armazena IPs. Operações lêem `ufw status`
