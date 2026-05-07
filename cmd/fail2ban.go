@@ -6,6 +6,7 @@ import (
 	"lsm/internal/config"
 	"lsm/internal/fail2ban"
 	"lsm/internal/runner"
+	"lsm/internal/ufw"
 )
 
 var fail2banCmd = &cobra.Command{
@@ -20,17 +21,24 @@ var fail2banCmd = &cobra.Command{
 			return err
 		}
 
+		// ignoreip = IPs já permitidos no UFW para a porta SSH (source of truth).
+		var ignoreIPs []string
+		if ufw.Installed() {
+			ignoreIPs = ufw.SpecificSources(cfg.SSH.Port, "tcp")
+		}
+
 		runner.Section("fail2ban: install + jail.local + enable")
 		if err := fail2ban.Install(); err != nil {
 			return err
 		}
-		if err := fail2ban.WriteJailConfig(cfg.SSH.Port, cfg.Network.AllowedIPs); err != nil {
+		if err := fail2ban.WriteJailConfig(cfg.SSH.Port, ignoreIPs); err != nil {
 			return err
 		}
 		if err := fail2ban.Enable(); err != nil {
 			return err
 		}
 		runner.Log("fail2ban a vigiar sshd na porta %d (bantime 1h, maxretry 5).", cfg.SSH.Port)
+		markInstalled("fail2ban")
 		return nil
 	},
 }

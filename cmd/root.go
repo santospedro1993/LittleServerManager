@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"lsm/internal/runner"
+	"lsm/internal/state"
 )
 
 var (
@@ -48,6 +49,18 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "/etc/lsm/config.yaml", "config file path")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "log actions without executing")
 	rootCmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "auto-confirm prompts")
+}
+
+// markInstalled records a successful module run in state.yaml.
+// Best-effort: load failures are non-fatal (state is observability, not a critical path).
+func markInstalled(name string) {
+	st, err := state.Load(cfgFile)
+	if err != nil {
+		return
+	}
+	if st.MarkInstalled(name) {
+		_ = st.Save()
+	}
 }
 
 // shouldOpen evaluates the auto_open_ports policy.

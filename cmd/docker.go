@@ -39,7 +39,11 @@ var dockerCmd = &cobra.Command{
 		docker.DisableRootful()
 
 		runner.Section(fmt.Sprintf("Docker rootless: user '%s'", cfg.Docker.RootlessUser))
-		return docker.SetupRootlessUser(cfg.Docker.RootlessUser)
+		if err := docker.SetupRootlessUser(cfg.Docker.RootlessUser); err != nil {
+			return err
+		}
+		markInstalled("docker")
+		return nil
 	},
 }
 

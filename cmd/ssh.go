@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"lsm/internal/config"
+	"lsm/internal/prompt"
 	"lsm/internal/runner"
 	sshmod "lsm/internal/ssh"
 	"lsm/internal/state"
@@ -31,8 +32,13 @@ var sshCmd = &cobra.Command{
 			return err
 		}
 
-		runner.Section(fmt.Sprintf("SSH: criar user '%s' + hardening", cfg.SSH.User))
-		if err := sshmod.CreateUser(cfg.SSH.User, cfg.SSH.Password); err != nil {
+		runner.Section(fmt.Sprintf("SSH: garantir user '%s' + hardening", cfg.SSH.User))
+
+		var password string
+		if !sshmod.UserExists(cfg.SSH.User) {
+			password = prompt.AskPassword(fmt.Sprintf("Password p/ novo user '%s'", cfg.SSH.User))
+		}
+		if err := sshmod.CreateUser(cfg.SSH.User, password); err != nil {
 			return err
 		}
 		if err := sshmod.Harden(cfg.SSH.Port); err != nil {
@@ -41,7 +47,7 @@ var sshCmd = &cobra.Command{
 
 		runner.Section(fmt.Sprintf("SSH: abrir porta %d em UFW", cfg.SSH.Port))
 		if shouldOpen(fmt.Sprintf("porta SSH %d/tcp", cfg.SSH.Port), cfg.Network.AutoOpenPorts) {
-			if err := sshmod.OpenFirewall(cfg.SSH.Port, cfg.Network.AllowedIPs); err != nil {
+			if err := sshmod.OpenFirewall(cfg.SSH.Port); err != nil {
 				return err
 			}
 			if st.AddPort(state.ManagedPort{Port: cfg.SSH.Port, Proto: "tcp", Label: "SSH"}) {
@@ -52,6 +58,8 @@ var sshCmd = &cobra.Command{
 		}
 
 		runner.Log("Próximo passo: testar SSH na porta %d, depois  ufw delete allow 22/tcp", cfg.SSH.Port)
+		runner.Log("Para restringir por IP: lsm add-ip <IP>")
+		markInstalled("ssh")
 		return nil
 	},
 }

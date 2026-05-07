@@ -22,6 +22,7 @@ var upgradesCmd = &cobra.Command{
 			return err
 		}
 		runner.Log("unattended-upgrades ativo. Próximas updates de segurança aplicam-se automaticamente.")
+		markInstalled("upgrades")
 		return nil
 	},
 }

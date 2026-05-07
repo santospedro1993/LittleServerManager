@@ -34,6 +34,7 @@ var timesyncCmd = &cobra.Command{
 		}
 		runner.Log("NTP ativo. Timezone: %s. Sincronizado: %v.",
 			timesync.CurrentTimezone(), timesync.Synced())
+		markInstalled("timesync")
 		return nil
 	},
 }

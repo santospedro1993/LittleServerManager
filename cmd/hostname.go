@@ -29,6 +29,7 @@ var hostnameCmd = &cobra.Command{
 			return err
 		}
 		runner.Log("Hostname agora: %s", cfg.Hostname)
+		markInstalled("hostname")
 		return nil
 	},
 }

@@ -22,6 +22,7 @@ var sysctlCmd = &cobra.Command{
 			return err
 		}
 		runner.Log("sysctl aplicado.")
+		markInstalled("sysctl")
 		return nil
 	},
 }

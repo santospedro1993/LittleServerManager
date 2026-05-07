@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
 	"lsm/internal/prompt"
 	"lsm/internal/runner"
 	"lsm/internal/state"
@@ -14,7 +13,7 @@ import (
 
 var addIPCmd = &cobra.Command{
 	Use:   "add-ip [ip]",
-	Short: "Add IP/CIDR to whitelist + sync UFW for managed ports",
+	Short: "Allow IP/CIDR for all managed ports in UFW",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := runner.RequireRoot(); err != nil {
@@ -24,7 +23,7 @@ var addIPCmd = &cobra.Command{
 		if len(args) == 1 {
 			ip = args[0]
 		} else {
-			ip = prompt.AskIPOrCIDR("IP/CIDR a adicionar")
+			ip = prompt.AskIPOrCIDR("IP/CIDR a permitir")
 			if ip == "" {
 				fmt.Println("Cancelado.")
 				return nil
@@ -36,30 +35,27 @@ var addIPCmd = &cobra.Command{
 
 var removeIPCmd = &cobra.Command{
 	Use:   "remove-ip [ip]",
-	Short: "Remove IP/CIDR from whitelist + sync UFW",
+	Short: "Revoke IP/CIDR from managed ports in UFW",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := runner.RequireRoot(); err != nil {
-			return err
-		}
-		cfg, err := config.Load(cfgFile)
-		if err != nil {
 			return err
 		}
 		var ip string
 		if len(args) == 1 {
 			ip = args[0]
 		} else {
-			if len(cfg.Network.AllowedIPs) == 0 {
-				fmt.Println("Lista vazia, nada a remover.")
+			cur := currentWhitelist()
+			if len(cur) == 0 {
+				fmt.Println("Nenhum IP específico ativo nas portas geridas.")
 				return nil
 			}
-			fmt.Println("\nIPs atuais:")
-			for i, e := range cfg.Network.AllowedIPs {
+			fmt.Println("\nIPs atuais (UFW):")
+			for i, e := range cur {
 				fmt.Printf("  %d) %s\n", i+1, e)
 			}
-			idx := prompt.Choose("Qual remover?", cfg.Network.AllowedIPs)
-			ip = cfg.Network.AllowedIPs[idx-1]
+			idx := prompt.Choose("Qual remover?", cur)
+			ip = cur[idx-1]
 		}
 		return removeIP(ip)
 	},
@@ -70,80 +66,90 @@ func init() {
 	rootCmd.AddCommand(removeIPCmd)
 }
 
-func addIP(ip string) error {
-	cfg, err := config.Load(cfgFile)
+// currentWhitelist returns the union of specific IPs/CIDRs allowed on managed
+// ports per UFW. Source of truth: the firewall itself, not config.
+func currentWhitelist() []string {
+	if !ufw.Installed() {
+		return nil
+	}
+	st, err := state.Load(cfgFile)
 	if err != nil {
-		return err
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range st.ManagedPorts {
+		for _, src := range ufw.SpecificSources(p.Port, p.Proto) {
+			if !seen[src] {
+				seen[src] = true
+				out = append(out, src)
+			}
+		}
+	}
+	return out
+}
+
+func addIP(ip string) error {
+	if !ufw.Installed() {
+		return fmt.Errorf("UFW não instalado — corre 'lsm firewall' primeiro")
 	}
 	st, err := state.Load(cfgFile)
 	if err != nil {
 		return err
 	}
-
-	if !cfg.AddAllowedIP(ip) {
-		fmt.Printf("%s já está na whitelist.\n", ip)
+	if len(st.ManagedPorts) == 0 {
+		fmt.Println("Sem portas geridas em state.yaml — nada para abrir.")
 		return nil
 	}
 
-	// Aplicar nova regra para cada porta gerida.
-	if !ufw.Installed() {
-		fmt.Println("UFW não instalado — só atualizo config, não há regras a sincronizar.")
-	} else {
-		for _, p := range st.ManagedPorts {
-			label := fmt.Sprintf("%s - %s", p.Label, ip)
-			if err := ufw.AllowFrom(ip, p.Port, p.Proto, label); err != nil {
-				return fmt.Errorf("ufw allow %s %d/%s: %w", ip, p.Port, p.Proto, err)
+	for _, p := range st.ManagedPorts {
+		// Skip se já existe ALLOW from <ip>.
+		already := false
+		for _, src := range ufw.SpecificSources(p.Port, p.Proto) {
+			if src == ip {
+				already = true
+				break
 			}
 		}
-
-		// Se a lista passou de vazia para 1 IP, remove a regra "todos" das portas geridas.
-		if len(cfg.Network.AllowedIPs) == 1 {
-			for _, p := range st.ManagedPorts {
-				_ = ufw.DeleteAllow(p.Port, p.Proto)
-			}
+		if already {
+			runner.Log("UFW: %d/%s já permite %s.", p.Port, p.Proto, ip)
+			continue
+		}
+		label := fmt.Sprintf("%s - %s", p.Label, ip)
+		if err := ufw.AllowFrom(ip, p.Port, p.Proto, label); err != nil {
+			return fmt.Errorf("ufw allow %s %d/%s: %w", ip, p.Port, p.Proto, err)
+		}
+		// Se a porta tinha "Anywhere", remove-a — passou a estar restrita.
+		if ufw.IsOpenToAll(p.Port, p.Proto) {
+			_ = ufw.DeleteAllow(p.Port, p.Proto)
+			runner.Log("UFW: %d/%s — fechado a todos, restrito a IPs específicos.", p.Port, p.Proto)
 		}
 	}
-
-	if err := cfg.Save(); err != nil {
-		return err
-	}
-	fmt.Printf("Adicionado %s. Whitelist = %v\n", ip, cfg.Network.AllowedIPs)
+	fmt.Printf("Adicionado %s. Whitelist UFW = %v\n", ip, currentWhitelist())
 	return nil
 }
 
 func removeIP(ip string) error {
-	cfg, err := config.Load(cfgFile)
-	if err != nil {
-		return err
+	if !ufw.Installed() {
+		return fmt.Errorf("UFW não instalado")
 	}
 	st, err := state.Load(cfgFile)
 	if err != nil {
 		return err
 	}
 
-	if !cfg.RemoveAllowedIP(ip) {
-		fmt.Printf("%s não está na whitelist.\n", ip)
-		return nil
-	}
+	for _, p := range st.ManagedPorts {
+		_ = ufw.DeleteAllowFrom(ip, p.Port, p.Proto)
 
-	if ufw.Installed() {
-		for _, p := range st.ManagedPorts {
-			_ = ufw.DeleteAllowFrom(ip, p.Port, p.Proto)
-		}
-
-		// Se ficou vazia, reabre as portas geridas a todos.
-		if len(cfg.Network.AllowedIPs) == 0 {
-			for _, p := range st.ManagedPorts {
-				if err := ufw.Allow(p.Port, p.Proto, p.Label); err != nil {
-					return err
-				}
+		// Se a porta ficou sem IPs específicos E não estava aberta a todos,
+		// reabre a todos para evitar locked-out.
+		if len(ufw.SpecificSources(p.Port, p.Proto)) == 0 && !ufw.IsOpenToAll(p.Port, p.Proto) {
+			if err := ufw.Allow(p.Port, p.Proto, p.Label); err != nil {
+				return err
 			}
+			runner.Log("UFW: %d/%s sem IPs específicos — reaberto a todos.", p.Port, p.Proto)
 		}
 	}
-
-	if err := cfg.Save(); err != nil {
-		return err
-	}
-	fmt.Printf("Removido %s. Whitelist = %v\n", ip, cfg.Network.AllowedIPs)
+	fmt.Printf("Removido %s. Whitelist UFW = %v\n", ip, currentWhitelist())
 	return nil
 }

@@ -62,6 +62,62 @@ func PortPermitted(port int, proto string) bool {
 	return false
 }
 
+// AllowedSources parses `ufw status` and returns the From values that are
+// allowed to reach PORT/proto. The string "Anywhere" indicates the port is
+// open to all. IPv6 entries (lines containing "(v6)") are skipped to avoid
+// duplicates — UFW mirrors v4 rules to v6 by default.
+func AllowedSources(port int, proto string) []string {
+	s, err := Status()
+	if err != nil {
+		return nil
+	}
+	needle := fmt.Sprintf("%d/%s", port, proto)
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, needle) {
+			continue
+		}
+		if strings.Contains(t, "(v6)") {
+			continue
+		}
+		if !strings.Contains(t, "ALLOW") {
+			continue
+		}
+		// Format: "<port>/<proto>   ALLOW       <from>"
+		idx := strings.Index(t, "ALLOW")
+		from := strings.TrimSpace(t[idx+len("ALLOW"):])
+		if from == "" || seen[from] {
+			continue
+		}
+		seen[from] = true
+		out = append(out, from)
+	}
+	return out
+}
+
+// IsOpenToAll reports whether PORT/proto has an "Anywhere" allow rule.
+func IsOpenToAll(port int, proto string) bool {
+	for _, src := range AllowedSources(port, proto) {
+		if src == "Anywhere" {
+			return true
+		}
+	}
+	return false
+}
+
+// SpecificSources returns IPs/CIDRs allowed for PORT/proto, excluding "Anywhere".
+func SpecificSources(port int, proto string) []string {
+	var out []string
+	for _, src := range AllowedSources(port, proto) {
+		if src != "Anywhere" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
 // Allow opens a port from any source.
 func Allow(port int, proto, comment string) error {
 	return runner.Run("ufw", "allow",

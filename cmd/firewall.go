@@ -30,7 +30,11 @@ var firewallCmd = &cobra.Command{
 			}
 			runner.Log("Porta 22 aberta (bootstrap).")
 		}
-		return ufw.Enable()
+		if err := ufw.Enable(); err != nil {
+			return err
+		}
+		markInstalled("firewall")
+		return nil
 	},
 }
 

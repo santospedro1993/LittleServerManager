@@ -14,7 +14,8 @@ type ManagedPort struct {
 }
 
 type State struct {
-	ManagedPorts []ManagedPort `yaml:"managed_ports"`
+	ManagedPorts     []ManagedPort `yaml:"managed_ports"`
+	InstalledModules []string      `yaml:"installed_modules"`
 
 	path string `yaml:"-"`
 }
@@ -65,6 +66,28 @@ func (s *State) RemovePort(port int, proto string) bool {
 	for i, e := range s.ManagedPorts {
 		if e.Port == port && e.Proto == proto {
 			s.ManagedPorts = append(s.ManagedPorts[:i], s.ManagedPorts[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// MarkInstalled records that a module has been run successfully by lsm.
+// Returns true if newly added.
+func (s *State) MarkInstalled(name string) bool {
+	for _, n := range s.InstalledModules {
+		if n == name {
+			return false
+		}
+	}
+	s.InstalledModules = append(s.InstalledModules, name)
+	return true
+}
+
+// IsInstalled reports whether a module was previously run by lsm.
+func (s *State) IsInstalled(name string) bool {
+	for _, n := range s.InstalledModules {
+		if n == name {
 			return true
 		}
 	}

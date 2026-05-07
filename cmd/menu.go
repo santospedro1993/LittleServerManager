@@ -7,6 +7,7 @@ import (
 	"lsm/internal/config"
 	"lsm/internal/prompt"
 	"lsm/internal/state"
+	"lsm/internal/ufw"
 )
 
 // runMenu drives the interactive flow when lsm is invoked with no subcommand.
@@ -26,19 +27,26 @@ func runMenu() error {
 
 	for {
 		fmt.Println()
-		fmt.Println("=========================================")
-		fmt.Println("  lsm — config:", cfgFile)
-		fmt.Println("=========================================")
+		fmt.Println("╔═══════════════════════════════════════════╗")
+		fmt.Println("║  lsm — menu                               ║")
+		fmt.Printf("║  config: %-33s║\n", cfgFile)
+		fmt.Println("╚═══════════════════════════════════════════╝")
 		idx := prompt.Choose("Que ação?", []string{
 			"Validar setup",
 			"Correr módulo (firewall / ssh / docker / all)",
+			"Atualizar servidor (apt update + upgrade + autoremove)",
 			"Adicionar IP à whitelist",
 			"Remover IP da whitelist",
 			"Ver IPs / portas geridas",
 			"Re-correr Setup Inicial (sobrescreve config)",
 			"Sair",
 		})
+		if idx == 8 {
+			return nil
+		}
 
+		fmt.Println()
+		fmt.Println("─── output ─────────────────────────────────")
 		var err error
 		switch idx {
 		case 1:
@@ -46,23 +54,24 @@ func runMenu() error {
 		case 2:
 			err = chooseAndRunModule()
 		case 3:
-			ip := prompt.AskIPOrCIDR("IP/CIDR a adicionar")
-			if ip == "" {
-				continue
-			}
-			err = addIP(ip)
+			err = runUpdateServer()
 		case 4:
-			err = interactiveRemoveIP()
+			ip := prompt.AskIPOrCIDR("IP/CIDR a adicionar")
+			if ip != "" {
+				err = addIP(ip)
+			}
 		case 5:
-			err = showOverview()
+			err = interactiveRemoveIP()
 		case 6:
-			err = runWizard()
+			err = showOverview()
 		case 7:
-			return nil
+			err = runWizard()
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "erro:", err)
 		}
+		fmt.Println("────────────────────────────────────────────")
+		prompt.Pause("")
 	}
 }
 
@@ -134,20 +143,17 @@ func runAllModules() error {
 }
 
 func interactiveRemoveIP() error {
-	cfg, err := config.Load(cfgFile)
-	if err != nil {
-		return err
-	}
-	if len(cfg.Network.AllowedIPs) == 0 {
-		fmt.Println("Whitelist vazia.")
+	cur := currentWhitelist()
+	if len(cur) == 0 {
+		fmt.Println("Nenhum IP específico em portas geridas (UFW).")
 		return nil
 	}
-	opts := append(append([]string{}, cfg.Network.AllowedIPs...), "voltar")
+	opts := append(append([]string{}, cur...), "voltar")
 	idx := prompt.Choose("Remover qual IP?", opts)
 	if idx == len(opts) {
 		return nil
 	}
-	return removeIP(cfg.Network.AllowedIPs[idx-1])
+	return removeIP(cur[idx-1])
 }
 
 func showOverview() error {
@@ -159,24 +165,50 @@ func showOverview() error {
 	if err != nil {
 		return err
 	}
+
 	fmt.Println()
-	fmt.Println("--- Whitelist (allowed_ips) ---")
-	if len(cfg.Network.AllowedIPs) == 0 {
-		fmt.Println("  (vazia → portas abrem a TODOS)")
+	fmt.Println("--- Portas geridas + estado UFW ---")
+	if len(st.ManagedPorts) == 0 {
+		fmt.Println("  (nenhuma — corre os módulos primeiro)")
 	} else {
-		for _, ip := range cfg.Network.AllowedIPs {
+		for _, p := range st.ManagedPorts {
+			srcs := ufw.AllowedSources(p.Port, p.Proto)
+			if len(srcs) == 0 {
+				fmt.Printf("  - %d/%s  %s — [sem regra UFW]\n", p.Port, p.Proto, p.Label)
+				continue
+			}
+			fmt.Printf("  - %d/%s  %s\n", p.Port, p.Proto, p.Label)
+			for _, s := range srcs {
+				if s == "Anywhere" {
+					fmt.Printf("      • Anywhere (aberta a todos)\n")
+				} else {
+					fmt.Printf("      • %s\n", s)
+				}
+			}
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("--- Whitelist efetiva (união entre portas geridas) ---")
+	wl := currentWhitelist()
+	if len(wl) == 0 {
+		fmt.Println("  (sem IPs específicos — portas abertas a todos ou sem regras)")
+	} else {
+		for _, ip := range wl {
 			fmt.Printf("  - %s\n", ip)
 		}
 	}
+
 	fmt.Println()
-	fmt.Println("--- Portas geridas (state.yaml) ---")
-	if len(st.ManagedPorts) == 0 {
-		fmt.Println("  (nenhuma)")
+	fmt.Println("--- Módulos instalados pelo lsm ---")
+	if len(st.InstalledModules) == 0 {
+		fmt.Println("  (nenhum)")
 	} else {
-		for _, p := range st.ManagedPorts {
-			fmt.Printf("  - %d/%s  %s\n", p.Port, p.Proto, p.Label)
+		for _, m := range st.InstalledModules {
+			fmt.Printf("  - %s\n", m)
 		}
 	}
+
 	fmt.Println()
 	fmt.Println("--- Política ---")
 	fmt.Println("  auto_open_ports:", cfg.Network.AutoOpenPorts)

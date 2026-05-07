@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -77,6 +78,43 @@ func Choose(question string, options []string) int {
 		}
 		fmt.Println("Opção inválida.")
 	}
+}
+
+// AskPassword reads a password from stdin with terminal echo disabled.
+// Asks twice to detect typos. Falls back to echoed input if /dev/tty isn't available.
+func AskPassword(question string) string {
+	for {
+		fmt.Printf("%s: ", question)
+		_ = exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+		pw1 := read()
+		_ = exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+		fmt.Println()
+		if pw1 == "" {
+			fmt.Println("Password vazia, tenta de novo.")
+			continue
+		}
+
+		fmt.Print("Confirma password: ")
+		_ = exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+		pw2 := read()
+		_ = exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+		fmt.Println()
+
+		if pw1 != pw2 {
+			fmt.Println("Passwords não batem certo, tenta de novo.")
+			continue
+		}
+		return pw1
+	}
+}
+
+// Pause blocks until Enter is pressed (used between menu actions).
+func Pause(msg string) {
+	if msg == "" {
+		msg = "Pressiona Enter para continuar"
+	}
+	fmt.Printf("\n%s... ", msg)
+	read()
 }
 
 // AskIPOrCIDR prompts repeatedly until a valid IP or CIDR is entered. Empty cancels (returns "").

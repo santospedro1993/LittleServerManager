@@ -113,6 +113,10 @@ lsm/
 
 ## 6. Schema do `config.yaml`
 
+`config.yaml` representa **intenção** — sem segredos, sem dados derivados.
+Whitelist de IPs **NÃO** está aqui (lê-se direto do UFW). Password SSH **NÃO**
+está aqui (pedida em runtime quando o user é criado).
+
 ```yaml
 timezone: Europe/Lisbon          # default se omitido
 hostname: srv01                  # opcional; vazio → módulo hostname não corre
@@ -120,16 +124,12 @@ fqdn: srv01.exemplo.com          # opcional
 
 ssh:
   port: 2210                     # required
-  user: dev24                    # required
-  password: ALTERA-ME-123        # plaintext (sim, é mau; ssh-keys virá depois)
+  user: dev24                    # required (password pedida em runtime)
 
 docker:
   rootless_user: docker24        # required
 
 network:
-  allowed_ips:                   # vazia → portas abrem a TODOS
-    - 10.0.0.5
-    - 192.168.1.0/24
   auto_open_ports: ask           # true | false | ask
 ```
 
@@ -209,10 +209,18 @@ Padrão obrigatório (segue ssh.go ou fail2ban.go como template):
 | 2 | `timesync` | `set-timezone` + `set-ntp true` + enable timesyncd | `timezone` |
 | 3 | `sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` + `sysctl --system` | — (hardcoded) |
 | 4 | `hostname` | `hostnamectl` + atualiza `/etc/hosts` | `hostname`, `fqdn` (skip se vazio) |
-| 5 | `ssh` | useradd, sudo, sed sshd_config, restart, abre porta UFW, regista state | `ssh.*`, `network.allowed_ips`, `network.auto_open_ports` |
+| 5 | `ssh` | Cria user (pede password em runtime se ainda não existe), hardening sshd, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
 | 6 | `docker` | Remove conflitos, install Docker CE, rootless setup user dedicado | `docker.rootless_user` |
-| 7 | `fail2ban` | Install, escreve `jail.local` (port=ssh.port, ignoreip=allowed_ips) | `ssh.port`, `network.allowed_ips` |
+| 7 | `fail2ban` | Install, escreve `jail.local` (port=ssh.port, ignoreip = `ufw.SpecificSources` da porta SSH) | `ssh.port` |
 | 8 | `upgrades` | Install + escreve `20auto-upgrades` + enable service | — |
+
+Cada módulo regista-se em `state.yaml::installed_modules` após sucesso.
+`validate` só faz checks contra módulos com flag — outros aparecem como `[--]`.
+
+Comandos não-modulares:
+- `lsm update-server` — `apt update + upgrade + autoremove + autoclean`,
+  com `needrestart` para auto-restart de serviços. Detecta reboot pendente
+  e oferece: agora / amanhã 04:00 (`systemd-run --on-calendar`) / adiar.
 
 Sub-cmds especiais:
 - `lsm timesync sync` — força re-sync (restart timesyncd)
@@ -227,8 +235,9 @@ lsm                       # menu interativo
 lsm init                  # wizard
 lsm validate              # audita estado vs config (read-only)
 lsm all                   # corre todos os módulos por ordem
-lsm add-ip [IP]           # adiciona à whitelist + sync UFW
-lsm remove-ip [IP]        # remove + sync UFW
+lsm update-server         # apt update + upgrade + autoremove + auto-restart
+lsm add-ip [IP]           # ALLOW from IP em todas as portas geridas (UFW direto)
+lsm remove-ip [IP]        # DELETE allow from IP (com fallback p/ Anywhere se ficar vazio)
 lsm firewall|ssh|docker|fail2ban|upgrades|timesync|sysctl|hostname
 lsm timesync sync|status
 ```
@@ -243,18 +252,28 @@ Flags globais:
 
 ## 11. Semântica da whitelist de IPs
 
-- **`allowed_ips: []`** → módulos abrem `ufw allow PORT/proto` (qualquer source).
-- **`allowed_ips: [a, b, c]`** → módulos fazem `ufw allow from <ip> to any port PORT proto PROTO` por cada IP.
+**Source of truth = UFW**. Config NÃO armazena IPs. Operações lêem `ufw status`
+e modificam regras direto.
+
+Estado da porta gerida pode ser:
+- **Aberta a todos** → `ALLOW Anywhere` no UFW (sem regras `from`).
+- **Restrita** → uma ou mais regras `ALLOW from <ip> to any port P proto T`,
+  e SEM regra `Anywhere` em paralelo.
 
 `lsm add-ip X`:
-1. Append a `config.yaml::network.allowed_ips`.
-2. Para cada porta em `state.yaml::managed_ports`: `ufw AllowFrom X port proto`.
-3. Se whitelist passou de 0 para 1 IP: `ufw DeleteAllow port proto` (remove regras "todos").
+1. Para cada porta em `state.yaml::managed_ports`: `ufw allow from X to any port P proto T`.
+2. Se a porta tinha regra `Anywhere`, remove-a — passa a estar restrita.
 
 `lsm remove-ip X`:
-1. Remove de `config.yaml`.
-2. Para cada porta gerida: `ufw DeleteAllowFrom X port proto`.
-3. Se whitelist ficou vazia: `ufw Allow port proto label` (reabre a todos).
+1. Para cada porta gerida: `ufw delete allow from X ...`.
+2. Se a porta ficou sem IPs específicos AND não estava `Anywhere`:
+   `ufw allow P/T <label>` para evitar locked-out (reabre a todos).
+
+`fail2ban` lê `ignoreip` direto de `ufw.SpecificSources(sshPort, "tcp")` — IPs
+que já têm acesso explícito ao SSH não são banidos.
+
+Visualização (`Ver IPs / portas geridas` no menu) usa `ufw.AllowedSources` por
+porta gerida + união disso como "whitelist efetiva".
 
 ---
 
@@ -361,7 +380,7 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 
 ## 18. Coisas que provavelmente vão precisar de cuidado
 
-- **SSH password é plaintext em config.yaml** — quando ssh-keys for implementado, deprecar `ssh.password` ou tornar opcional.
+- **Password SSH não persiste**. É pedida só quando o user ainda não existe. Se rodar `lsm ssh` sobre user existente, password mantém-se a que já estava. Para reset: `passwd <user>` manual.
 - **Sysctl `net.ipv6.conf.all.forwarding=1`** pode ser indesejado em hosts puramente IPv4. Considerar tornar opcional via config.
 - **Fail2ban backend `systemd`** assume rsyslog/journald. Em Debian default funciona. Em hosts customizados pode falhar.
 - **Docker rootless**: `dockerd-rootless-setuptool.sh install` precisa de `machinectl shell` que precisa de `systemd-container` (geralmente lá). Validar em distros minimalistas.

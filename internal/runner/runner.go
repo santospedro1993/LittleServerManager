@@ -75,3 +75,21 @@ func Stdin(in, name string, args ...string) error {
 func TryRun(name string, args ...string) {
 	_ = Run(name, args...)
 }
+
+// RunEnv is like Run but sets extra env vars on top of the inherited environment.
+func RunEnv(env map[string]string, name string, args ...string) error {
+	line := name + " " + strings.Join(args, " ")
+	if DryRun {
+		Log("DRY: %s (env: %v)", line, env)
+		return nil
+	}
+	Log("RUN: %s", line)
+	c := exec.Command(name, args...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Env = os.Environ()
+	for k, v := range env {
+		c.Env = append(c.Env, k+"="+v)
+	}
+	return c.Run()
+}

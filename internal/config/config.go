@@ -7,6 +7,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Config represents lsm intent — preferences and target values.
+// It does NOT persist secrets (passwords) nor derived runtime data
+// (effective UFW whitelists). Those live in state or the system itself.
 type Config struct {
 	Timezone string        `yaml:"timezone"`
 	Hostname string        `yaml:"hostname,omitempty"`
@@ -19,9 +22,8 @@ type Config struct {
 }
 
 type SSHConfig struct {
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
+	Port int    `yaml:"port"`
+	User string `yaml:"user"`
 }
 
 type DockerConfig struct {
@@ -29,8 +31,7 @@ type DockerConfig struct {
 }
 
 type NetworkConfig struct {
-	AllowedIPs    []string `yaml:"allowed_ips"`
-	AutoOpenPorts string   `yaml:"auto_open_ports"`
+	AutoOpenPorts string `yaml:"auto_open_ports"`
 }
 
 // Exists reports whether the config file is present.
@@ -86,26 +87,4 @@ func (c *Config) Save() error {
 		return err
 	}
 	return os.WriteFile(c.path, data, 0600)
-}
-
-// AddAllowedIP appends ip if not present. Returns true if added.
-func (c *Config) AddAllowedIP(ip string) bool {
-	for _, e := range c.Network.AllowedIPs {
-		if e == ip {
-			return false
-		}
-	}
-	c.Network.AllowedIPs = append(c.Network.AllowedIPs, ip)
-	return true
-}
-
-// RemoveAllowedIP removes ip if present. Returns true if removed.
-func (c *Config) RemoveAllowedIP(ip string) bool {
-	for i, e := range c.Network.AllowedIPs {
-		if e == ip {
-			c.Network.AllowedIPs = append(c.Network.AllowedIPs[:i], c.Network.AllowedIPs[i+1:]...)
-			return true
-		}
-	}
-	return false
 }

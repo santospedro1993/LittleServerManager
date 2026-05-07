@@ -47,6 +47,7 @@ func runValidate() error {
 
 	pass := 0
 	fail := 0
+	skipped := 0
 	check := func(name string, ok bool, detail string) {
 		mark := "OK  "
 		if !ok {
@@ -61,45 +62,60 @@ func runValidate() error {
 			fmt.Printf("  [%s] %s — %s\n", mark, name, detail)
 		}
 	}
+	skip := func(module, reason string) {
+		skipped++
+		fmt.Printf("  [--  ] %s — %s\n", module, reason)
+	}
 
-	// --- UFW ---
-	check("UFW instalado", ufw.Installed(), "")
-	if ufw.Installed() {
-		check("UFW ativo", ufw.IsActive(), "")
+	// --- firewall (UFW) ---
+	if st.IsInstalled("firewall") {
+		check("UFW instalado", ufw.Installed(), "")
+		if ufw.Installed() {
+			check("UFW ativo", ufw.IsActive(), "")
+		}
+	} else {
+		skip("firewall", "não instalado pelo lsm")
 	}
 
 	// --- SSH ---
-	if _, err := user.Lookup(cfg.SSH.User); err == nil {
-		check(fmt.Sprintf("user '%s' existe", cfg.SSH.User), true, "")
+	if st.IsInstalled("ssh") {
+		if _, err := user.Lookup(cfg.SSH.User); err == nil {
+			check(fmt.Sprintf("user '%s' existe", cfg.SSH.User), true, "")
+		} else {
+			check(fmt.Sprintf("user '%s' existe", cfg.SSH.User), false, err.Error())
+		}
+
+		out, _ := runner.Capture("grep", "-E", "^Port ", "/etc/ssh/sshd_config")
+		check(fmt.Sprintf("sshd Port = %d", cfg.SSH.Port),
+			strings.Contains(out, fmt.Sprintf("Port %d", cfg.SSH.Port)), strings.TrimSpace(out))
+
+		out, _ = runner.Capture("grep", "-E", "^PermitRootLogin", "/etc/ssh/sshd_config")
+		check("sshd PermitRootLogin no",
+			strings.Contains(out, "PermitRootLogin no"), strings.TrimSpace(out))
+
+		if ufw.Installed() {
+			check(fmt.Sprintf("UFW permite porta SSH %d/tcp", cfg.SSH.Port),
+				ufw.PortPermitted(cfg.SSH.Port, "tcp"), "")
+		}
 	} else {
-		check(fmt.Sprintf("user '%s' existe", cfg.SSH.User), false, err.Error())
-	}
-
-	out, _ := runner.Capture("grep", "-E", "^Port ", "/etc/ssh/sshd_config")
-	check(fmt.Sprintf("sshd Port = %d", cfg.SSH.Port),
-		strings.Contains(out, fmt.Sprintf("Port %d", cfg.SSH.Port)), strings.TrimSpace(out))
-
-	out, _ = runner.Capture("grep", "-E", "^PermitRootLogin", "/etc/ssh/sshd_config")
-	check("sshd PermitRootLogin no",
-		strings.Contains(out, "PermitRootLogin no"), strings.TrimSpace(out))
-
-	if ufw.Installed() {
-		check(fmt.Sprintf("UFW permite porta SSH %d/tcp", cfg.SSH.Port),
-			ufw.PortPermitted(cfg.SSH.Port, "tcp"), "")
+		skip("ssh", "não instalado pelo lsm")
 	}
 
 	// --- Docker ---
-	if _, err := user.Lookup(cfg.Docker.RootlessUser); err == nil {
-		check(fmt.Sprintf("user '%s' existe", cfg.Docker.RootlessUser), true, "")
+	if st.IsInstalled("docker") {
+		if _, err := user.Lookup(cfg.Docker.RootlessUser); err == nil {
+			check(fmt.Sprintf("user '%s' existe", cfg.Docker.RootlessUser), true, "")
+		} else {
+			check(fmt.Sprintf("user '%s' existe", cfg.Docker.RootlessUser), false, err.Error())
+		}
+		subuid, _ := runner.Capture("grep", fmt.Sprintf("^%s:", cfg.Docker.RootlessUser), "/etc/subuid")
+		check("subuid configurado", strings.TrimSpace(subuid) != "", strings.TrimSpace(subuid))
+		check("Docker engine presente", runner.HasCommand("docker"), "")
 	} else {
-		check(fmt.Sprintf("user '%s' existe", cfg.Docker.RootlessUser), false, err.Error())
+		skip("docker", "não instalado pelo lsm")
 	}
-	subuid, _ := runner.Capture("grep", fmt.Sprintf("^%s:", cfg.Docker.RootlessUser), "/etc/subuid")
-	check("subuid configurado", strings.TrimSpace(subuid) != "", strings.TrimSpace(subuid))
 
-	check("Docker engine presente", runner.HasCommand("docker"), "")
-
-	// --- Managed ports ---
+	// --- Managed ports (sempre que UFW esteja presente) ---
 	if ufw.Installed() {
 		for _, p := range st.ManagedPorts {
 			check(fmt.Sprintf("UFW permite %d/%s (%s)", p.Port, p.Proto, p.Label),
@@ -108,46 +124,64 @@ func runValidate() error {
 	}
 
 	// --- fail2ban ---
-	check("fail2ban instalado", fail2ban.Installed(), "")
-	if fail2ban.Installed() {
-		out, _ := runner.Capture("systemctl", "is-active", "fail2ban")
-		check("fail2ban ativo", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
+	if st.IsInstalled("fail2ban") {
+		check("fail2ban instalado", fail2ban.Installed(), "")
+		if fail2ban.Installed() {
+			out, _ := runner.Capture("systemctl", "is-active", "fail2ban")
+			check("fail2ban ativo", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
+		}
+	} else {
+		skip("fail2ban", "não instalado pelo lsm")
 	}
 
 	// --- unattended-upgrades ---
-	check("unattended-upgrades instalado", upgrades.Installed(), "")
-	if upgrades.Installed() {
-		out, _ := runner.Capture("systemctl", "is-enabled", "unattended-upgrades")
-		check("unattended-upgrades enabled", strings.TrimSpace(out) == "enabled", strings.TrimSpace(out))
+	if st.IsInstalled("upgrades") {
+		check("unattended-upgrades instalado", upgrades.Installed(), "")
+		if upgrades.Installed() {
+			out, _ := runner.Capture("systemctl", "is-enabled", "unattended-upgrades")
+			check("unattended-upgrades enabled", strings.TrimSpace(out) == "enabled", strings.TrimSpace(out))
+		}
+	} else {
+		skip("upgrades", "não instalado pelo lsm")
 	}
 
 	// --- timesync ---
-	check("NTP enabled (timedatectl)", timesync.NTPEnabled(), "")
-	check("Sistema sincronizado", timesync.Synced(), "")
-	curTZ := timesync.CurrentTimezone()
-	check(fmt.Sprintf("Timezone = %s", cfg.Timezone),
-		curTZ == cfg.Timezone, "atual: "+curTZ)
-
-	// --- sysctl (spot-check key values) ---
-	for _, key := range []string{
-		"net.ipv4.ip_forward",
-		"net.ipv4.tcp_syncookies",
-		"net.ipv4.conf.all.rp_filter",
-		"vm.swappiness",
-	} {
-		want := sysctl.Expected()[key]
-		got, _ := sysctl.Get(key)
-		check(fmt.Sprintf("sysctl %s = %s", key, want), got == want, "atual: "+got)
+	if st.IsInstalled("timesync") {
+		check("NTP enabled (timedatectl)", timesync.NTPEnabled(), "")
+		check("Sistema sincronizado", timesync.Synced(), "")
+		curTZ := timesync.CurrentTimezone()
+		check(fmt.Sprintf("Timezone = %s", cfg.Timezone),
+			curTZ == cfg.Timezone, "atual: "+curTZ)
+	} else {
+		skip("timesync", "não instalado pelo lsm")
 	}
 
-	// --- hostname (skip se não configurado) ---
-	if cfg.Hostname != "" {
+	// --- sysctl ---
+	if st.IsInstalled("sysctl") {
+		for _, key := range []string{
+			"net.ipv4.ip_forward",
+			"net.ipv4.tcp_syncookies",
+			"net.ipv4.conf.all.rp_filter",
+			"vm.swappiness",
+		} {
+			want := sysctl.Expected()[key]
+			got, _ := sysctl.Get(key)
+			check(fmt.Sprintf("sysctl %s = %s", key, want), got == want, "atual: "+got)
+		}
+	} else {
+		skip("sysctl", "não instalado pelo lsm")
+	}
+
+	// --- hostname ---
+	if st.IsInstalled("hostname") {
 		cur, _ := hostname.Current()
 		check(fmt.Sprintf("hostname = %s", cfg.Hostname), cur == cfg.Hostname, "atual: "+cur)
+	} else if cfg.Hostname != "" {
+		skip("hostname", "configurado mas não aplicado pelo lsm")
 	}
 
 	fmt.Println()
-	fmt.Printf("Total: %d OK, %d FAIL\n", pass, fail)
+	fmt.Printf("Total: %d OK, %d FAIL, %d skipped\n", pass, fail, skipped)
 	if fail > 0 {
 		return fmt.Errorf("validação falhou em %d check(s)", fail)
 	}

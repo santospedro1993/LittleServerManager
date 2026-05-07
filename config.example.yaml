@@ -1,16 +1,27 @@
+# lsm config — apenas intenção / preferências.
+# NÃO contém segredos (passwords são pedidas em runtime quando necessário).
+# NÃO contém whitelist de IPs (deriva-se do estado real do UFW).
+
 timezone: Europe/Lisbon
 
+# Hostname é opcional. Vazio → módulo hostname não corre.
+hostname: srv01
+fqdn: srv01.exemplo.com
+
 ssh:
+  # Porta alternativa à 22 (reduz brute-force automatizado).
   port: 2210
+  # User não-root para administrar via SSH (com sudo).
+  # Password é pedida no momento de criar o user, não fica em ficheiro.
   user: dev24
-  password: ALTERA-ME-123
 
 docker:
+  # User dedicado para correr containers em modo rootless.
   rootless_user: docker24
 
 network:
-  # Lista vazia → portas abrem a TODOS (sem restrição de origem)
-  # Populada → módulos abrem porta só para estes IPs/CIDRs
-  allowed_ips: []
-  # Política para abrir portas em UFW: true | false | ask
+  # Política para módulos que precisam de abrir portas em UFW:
+  #   ask   → pergunta caso a caso (recomendado)
+  #   true  → abre automaticamente
+  #   false → nunca abre (gestão manual)
   auto_open_ports: ask
