@@ -59,10 +59,13 @@ func InstallEngine() error {
 	if err := runner.Run("apt-get", "update", "-qq"); err != nil {
 		return err
 	}
+	// systemd-container provides `machinectl`, used to run the rootless
+	// setup tool inside the rootless user's session.
 	return runner.Run("apt-get", "install", "-y", "-qq",
 		"docker-ce", "docker-ce-cli", "containerd.io",
 		"docker-buildx-plugin", "docker-compose-plugin",
-		"docker-ce-rootless-extras", "uidmap", "dbus-user-session")
+		"docker-ce-rootless-extras", "uidmap", "dbus-user-session",
+		"systemd-container")
 }
 
 func DisableRootful() {
@@ -96,6 +99,15 @@ func SetupRootlessUser(name string) error {
 
 	if err := runner.Run("loginctl", "enable-linger", name); err != nil {
 		return err
+	}
+
+	// machinectl pertence ao package systemd-container — pode faltar em
+	// instalações Debian minimal. Garante presente antes de chamar.
+	if !runner.HasCommand("machinectl") {
+		runner.Log("machinectl em falta — a instalar systemd-container.")
+		if err := runner.Run("apt-get", "install", "-y", "-qq", "systemd-container"); err != nil {
+			return fmt.Errorf("install systemd-container: %w", err)
+		}
 	}
 
 	return runner.Run("machinectl", "shell", name+"@", "/bin/bash", "-c",
