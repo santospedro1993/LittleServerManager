@@ -72,9 +72,12 @@ func Choose(question string, options []string) int {
 	return ChooseEx(question, options, false, false)
 }
 
-// ChooseEx renders a numbered menu plus optional letter shortcuts.
-// 'b' = back (when withBack), 'x' = exit (when withExit). Returns the
-// 1-based index for numeric input, or ChoiceBack / ChoiceExit for letters.
+// ChooseEx renders a numbered menu plus an optional 'x' shortcut. A single
+// letter covers both navigation cases: at the top level 'x' returns
+// ChoiceExit, in a submenu it returns ChoiceBack. The two never overlap in
+// the same prompt (top-level menus don't have a parent, submenus aren't
+// the program's exit point), so one key is unambiguous and the user only
+// has to learn one binding.
 func ChooseEx(question string, options []string, withBack, withExit bool) int {
 	for {
 		fmt.Println()
@@ -83,10 +86,8 @@ func ChooseEx(question string, options []string, withBack, withExit bool) int {
 			fmt.Printf("  %d) %s\n", i+1, o)
 		}
 		switch {
-		case withBack && withExit:
-			fmt.Println("  b) back   x) exit")
 		case withBack:
-			fmt.Println("  b) back")
+			fmt.Println("  x) back")
 		case withExit:
 			fmt.Println("  x) exit")
 		}
@@ -94,11 +95,13 @@ func ChooseEx(question string, options []string, withBack, withExit bool) int {
 		if a == "" {
 			continue
 		}
-		if withBack && (a == "b" || a == "back") {
-			return ChoiceBack
-		}
-		if withExit && (a == "x" || a == "exit" || a == "quit" || a == "q") {
-			return ChoiceExit
+		if a == "x" || a == "back" || a == "exit" || a == "quit" || a == "q" {
+			if withBack {
+				return ChoiceBack
+			}
+			if withExit {
+				return ChoiceExit
+			}
 		}
 		n, err := strconv.Atoi(a)
 		if err == nil && n >= 1 && n <= len(options) {
