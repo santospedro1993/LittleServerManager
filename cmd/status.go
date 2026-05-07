@@ -44,7 +44,8 @@ func init() {
 }
 
 func statusOnce() error {
-	printStatus()
+	snap := gatherStatus()
+	renderStatus(snap)
 	return nil
 }
 
@@ -56,16 +57,20 @@ func statusLiveLoop() error {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 
+	// Gather BEFORE clearing the screen so there's no blank period while
+	// the CPU + network samples (1s combined) are running.
+	snap := gatherStatus()
 	clearScreen()
-	printStatus()
+	renderStatus(snap)
 	for {
 		select {
 		case <-stop:
 			fmt.Println()
 			return nil
 		case <-t.C:
+			snap := gatherStatus()
 			clearScreen()
-			printStatus()
+			renderStatus(snap)
 		}
 	}
 }
@@ -73,22 +78,46 @@ func statusLiveLoop() error {
 // clearScreen uses the ANSI sequence so we don't depend on `clear`.
 func clearScreen() { fmt.Print("\033[H\033[2J") }
 
-func printStatus() {
-	host, _ := os.Hostname()
-	now := time.Now().Format("2006-01-02 15:04:05")
+// statusSnap holds one frame of host metrics. Captured outside renderStatus
+// so we can sample first (which sleeps ~1s for CPU + net deltas) and only
+// then clear the screen — eliminates the visible black gap in --live mode.
+type statusSnap struct {
+	host    string
+	now     string
+	cpuPct  float64
+	cores   int
+	mem     sysstat.MemInfo
+	disks   []sysstat.DiskUsage
+	netRate map[string][2]float64
+}
 
+func gatherStatus() statusSnap {
+	host, _ := os.Hostname()
 	cpuPct, _ := sysstat.CPUUsagePercent(200 * time.Millisecond)
 	mem, _ := sysstat.ReadMem()
 	disks, _ := sysstat.ReadDisks()
 	netRate, _ := sysstat.NetRate(800 * time.Millisecond)
+	return statusSnap{
+		host:    host,
+		now:     time.Now().Format("2006-01-02 15:04:05"),
+		cpuPct:  cpuPct,
+		cores:   sysstat.CPUCount(),
+		mem:     mem,
+		disks:   disks,
+		netRate: netRate,
+	}
+}
+
+func renderStatus(s statusSnap) {
+	cpuPct, mem, disks, netRate := s.cpuPct, s.mem, s.disks, s.netRate
 
 	fmt.Println("╔════════════════════════════════════════════════════════════╗")
-	fmt.Printf("║  Host status — %s — %-20s        ║\n", host, now)
+	fmt.Printf("║  Host status — %s — %-20s        ║\n", s.host, s.now)
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
 
 	// CPU
 	fmt.Println()
-	fmt.Printf("CPU      %5.1f%%  on %d logical cores\n", cpuPct, sysstat.CPUCount())
+	fmt.Printf("CPU      %5.1f%%  on %d logical cores\n", cpuPct, s.cores)
 	fmt.Printf("         %s\n", bar(cpuPct, 50))
 
 	// Memory
