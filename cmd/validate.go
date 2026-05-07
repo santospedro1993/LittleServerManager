@@ -22,37 +22,46 @@ var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Verify current setup against config (read-only)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runValidate()
+		_, _, err := runValidate()
+		return err
 	},
 }
 
 func init() { rootCmd.AddCommand(validateCmd) }
 
-func runValidate() error {
+// runValidate audits the current system against config and returns the set
+// of modules with at least one failed check, plus the FAIL count. The
+// "check & fix" flow consumes failedModules to know which modules to re-run.
+func runValidate() (failedModules []string, fail int, err error) {
 	if !config.Exists(cfgFile) {
-		return fmt.Errorf("config não existe (%s) — corre 'lsm init' primeiro", cfgFile)
+		return nil, 0, fmt.Errorf("config not found (%s) — run `lsm init` first", cfgFile)
 	}
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	st, err := state.Load(cfgFile)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 
-	fmt.Println("=== Validar Setup ===")
+	fmt.Println("=== Validate Setup ===")
 	fmt.Printf("Config: %s\n", cfgFile)
 	fmt.Println()
 
 	pass := 0
-	fail := 0
 	skipped := 0
+	failedSet := map[string]bool{}
+	currentModule := ""
+
 	check := func(name string, ok bool, detail string) {
 		mark := "OK  "
 		if !ok {
 			mark = "FAIL"
 			fail++
+			if currentModule != "" {
+				failedSet[currentModule] = true
+			}
 		} else {
 			pass++
 		}
@@ -68,21 +77,23 @@ func runValidate() error {
 	}
 
 	// --- firewall (UFW) ---
+	currentModule = "firewall"
 	if st.IsInstalled("firewall") {
-		check("UFW instalado", ufw.Installed(), "")
+		check("UFW installed", ufw.Installed(), "")
 		if ufw.Installed() {
-			check("UFW ativo", ufw.IsActive(), "")
+			check("UFW active", ufw.IsActive(), "")
 		}
 	} else {
-		skip("firewall", "não instalado pelo lsm")
+		skip("firewall", "not installed by lsm")
 	}
 
 	// --- SSH ---
+	currentModule = "ssh"
 	if st.IsInstalled("ssh") {
 		if _, err := user.Lookup(cfg.SSH.User); err == nil {
-			check(fmt.Sprintf("user '%s' existe", cfg.SSH.User), true, "")
+			check(fmt.Sprintf("user '%s' exists", cfg.SSH.User), true, "")
 		} else {
-			check(fmt.Sprintf("user '%s' existe", cfg.SSH.User), false, err.Error())
+			check(fmt.Sprintf("user '%s' exists", cfg.SSH.User), false, err.Error())
 		}
 
 		out, _ := runner.Capture("grep", "-E", "^Port ", "/etc/ssh/sshd_config")
@@ -94,69 +105,75 @@ func runValidate() error {
 			strings.Contains(out, "PermitRootLogin no"), strings.TrimSpace(out))
 
 		if ufw.Installed() {
-			check(fmt.Sprintf("UFW permite porta SSH %d/tcp", cfg.SSH.Port),
+			check(fmt.Sprintf("UFW allows SSH port %d/tcp", cfg.SSH.Port),
 				ufw.PortPermitted(cfg.SSH.Port, "tcp"), "")
 		}
 	} else {
-		skip("ssh", "não instalado pelo lsm")
+		skip("ssh", "not installed by lsm")
 	}
 
 	// --- Docker ---
+	currentModule = "docker"
 	if st.IsInstalled("docker") {
 		if _, err := user.Lookup(cfg.Docker.RootlessUser); err == nil {
-			check(fmt.Sprintf("user '%s' existe", cfg.Docker.RootlessUser), true, "")
+			check(fmt.Sprintf("user '%s' exists", cfg.Docker.RootlessUser), true, "")
 		} else {
-			check(fmt.Sprintf("user '%s' existe", cfg.Docker.RootlessUser), false, err.Error())
+			check(fmt.Sprintf("user '%s' exists", cfg.Docker.RootlessUser), false, err.Error())
 		}
 		subuid, _ := runner.Capture("grep", fmt.Sprintf("^%s:", cfg.Docker.RootlessUser), "/etc/subuid")
-		check("subuid configurado", strings.TrimSpace(subuid) != "", strings.TrimSpace(subuid))
-		check("Docker engine presente", runner.HasCommand("docker"), "")
+		check("subuid configured", strings.TrimSpace(subuid) != "", strings.TrimSpace(subuid))
+		check("Docker engine present", runner.HasCommand("docker"), "")
 	} else {
-		skip("docker", "não instalado pelo lsm")
+		skip("docker", "not installed by lsm")
 	}
 
-	// --- Managed ports (sempre que UFW esteja presente) ---
+	// --- Managed ports (whenever UFW is installed) ---
+	currentModule = ""
 	if ufw.Installed() {
 		for _, p := range st.ManagedPorts {
-			check(fmt.Sprintf("UFW permite %d/%s (%s)", p.Port, p.Proto, p.Label),
+			check(fmt.Sprintf("UFW allows %d/%s (%s)", p.Port, p.Proto, p.Label),
 				ufw.PortPermitted(p.Port, p.Proto), "")
 		}
 	}
 
 	// --- fail2ban ---
+	currentModule = "fail2ban"
 	if st.IsInstalled("fail2ban") {
-		check("fail2ban instalado", fail2ban.Installed(), "")
+		check("fail2ban installed", fail2ban.Installed(), "")
 		if fail2ban.Installed() {
 			out, _ := runner.Capture("systemctl", "is-active", "fail2ban")
-			check("fail2ban ativo", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
+			check("fail2ban active", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
 		}
 	} else {
-		skip("fail2ban", "não instalado pelo lsm")
+		skip("fail2ban", "not installed by lsm")
 	}
 
 	// --- unattended-upgrades ---
+	currentModule = "upgrades"
 	if st.IsInstalled("upgrades") {
-		check("unattended-upgrades instalado", upgrades.Installed(), "")
+		check("unattended-upgrades installed", upgrades.Installed(), "")
 		if upgrades.Installed() {
 			out, _ := runner.Capture("systemctl", "is-enabled", "unattended-upgrades")
 			check("unattended-upgrades enabled", strings.TrimSpace(out) == "enabled", strings.TrimSpace(out))
 		}
 	} else {
-		skip("upgrades", "não instalado pelo lsm")
+		skip("upgrades", "not installed by lsm")
 	}
 
 	// --- timesync ---
+	currentModule = "timesync"
 	if st.IsInstalled("timesync") {
 		check("NTP enabled (timedatectl)", timesync.NTPEnabled(), "")
-		check("Sistema sincronizado", timesync.Synced(), "")
+		check("system synchronized", timesync.Synced(), "")
 		curTZ := timesync.CurrentTimezone()
 		check(fmt.Sprintf("Timezone = %s", cfg.Timezone),
-			curTZ == cfg.Timezone, "atual: "+curTZ)
+			curTZ == cfg.Timezone, "current: "+curTZ)
 	} else {
-		skip("timesync", "não instalado pelo lsm")
+		skip("timesync", "not installed by lsm")
 	}
 
 	// --- sysctl ---
+	currentModule = "sysctl"
 	if st.IsInstalled("sysctl") {
 		for _, key := range []string{
 			"net.ipv4.ip_forward",
@@ -166,24 +183,44 @@ func runValidate() error {
 		} {
 			want := sysctl.Expected()[key]
 			got, _ := sysctl.Get(key)
-			check(fmt.Sprintf("sysctl %s = %s", key, want), got == want, "atual: "+got)
+			check(fmt.Sprintf("sysctl %s = %s", key, want), got == want, "current: "+got)
 		}
 	} else {
-		skip("sysctl", "não instalado pelo lsm")
+		skip("sysctl", "not installed by lsm")
 	}
 
 	// --- hostname ---
+	currentModule = "hostname"
 	if st.IsInstalled("hostname") {
 		cur, _ := hostname.Current()
-		check(fmt.Sprintf("hostname = %s", cfg.Hostname), cur == cfg.Hostname, "atual: "+cur)
+		check(fmt.Sprintf("hostname = %s", cfg.Hostname), cur == cfg.Hostname, "current: "+cur)
 	} else if cfg.Hostname != "" {
-		skip("hostname", "configurado mas não aplicado pelo lsm")
+		skip("hostname", "configured but not applied by lsm")
 	}
 
 	fmt.Println()
 	fmt.Printf("Total: %d OK, %d FAIL, %d skipped\n", pass, fail, skipped)
-	if fail > 0 {
-		return fmt.Errorf("validação falhou em %d check(s)", fail)
+
+	for m := range failedSet {
+		failedModules = append(failedModules, m)
 	}
-	return nil
+	if fail > 0 {
+		err = fmt.Errorf("validation failed for %d check(s)", fail)
+	}
+	return failedModules, fail, err
+}
+
+// moduleRunners maps validate-tracked module names to their RunE entrypoints.
+// Used by the "check & fix" flow to re-run modules with failures.
+func moduleRunners() map[string]func() error {
+	return map[string]func() error{
+		"firewall": func() error { return firewallCmd.RunE(firewallCmd, nil) },
+		"ssh":      func() error { return sshCmd.RunE(sshCmd, nil) },
+		"docker":   func() error { return dockerCmd.RunE(dockerCmd, nil) },
+		"fail2ban": func() error { return fail2banCmd.RunE(fail2banCmd, nil) },
+		"upgrades": func() error { return upgradesCmd.RunE(upgradesCmd, nil) },
+		"timesync": func() error { return timesyncCmd.RunE(timesyncCmd, nil) },
+		"sysctl":   func() error { return sysctlCmd.RunE(sysctlCmd, nil) },
+		"hostname": func() error { return hostnameCmd.RunE(hostnameCmd, nil) },
+	}
 }

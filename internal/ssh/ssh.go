@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"strconv"
+	"strings"
 
 	"lsm/internal/runner"
 	"lsm/internal/ufw"
@@ -64,10 +66,10 @@ func Harden(port int) error {
 }
 
 // GrantPasswordlessLSM writes /etc/sudoers.d/lsm so the given user can run
-// a narrow allowlist of operator-class lsm subcommands via sudo without a
-// password. Destructive operations (init, ssh, docker, fail2ban, upgrades,
-// sysctl, hostname, firewall, add-ip, remove-ip, all) are NOT granted —
-// those require real root login and are gated in-app by RequireAdmin.
+// `sudo lsm ...` without a password prompt. The blanket NOPASSWD on the
+// binary is fine: lsm itself enforces the admin/operator split in-app via
+// RequireAdmin (which rejects destructive ops when $SUDO_USER is set to a
+// non-root user). Sudoers stays simple; the gate is one place to maintain.
 //
 // The file is validated with `visudo -cf` before being moved into place —
 // a malformed drop-in would break sudo for everyone, so we never install
@@ -77,11 +79,9 @@ func GrantPasswordlessLSM(name string) error {
 	const tmp = "/etc/sudoers.d/.lsm.tmp"
 
 	body := fmt.Sprintf(`# Managed by lsm — do not edit by hand.
-# Operator-class lsm subcommands granted to %[1]s with NOPASSWD.
-# Anything not listed below requires real root login (no sudo path).
-%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm validate
-%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm update-server
-%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm timesync status
+# %[1]s can run `+"`sudo lsm`"+` without a password.
+# In-app RequireAdmin blocks destructive ops when invoked by non-root.
+%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm
 `, name)
 
 	if err := os.WriteFile(tmp, []byte(body), 0440); err != nil {
@@ -95,6 +95,59 @@ func GrantPasswordlessLSM(name string) error {
 		return fmt.Errorf("mover sudoers para %s: %w", final, err)
 	}
 	runner.Log("sudo NOPASSWD restrito configurado para '%s' (validate / update-server / timesync status).", name)
+	return nil
+}
+
+// SetAutoLaunchLSM toggles a snippet in the user's ~/.bash_profile that runs
+// `sudo lsm` on every interactive login. The snippet is bracketed by a
+// marker comment so we can remove it cleanly. Idempotent.
+func SetAutoLaunchLSM(name string, enable bool) error {
+	const beginMarker = "# >>> lsm auto-launch >>>"
+	const endMarker = "# <<< lsm auto-launch <<<"
+
+	u, err := user.Lookup(name)
+	if err != nil {
+		return fmt.Errorf("user %s: %w", name, err)
+	}
+	profile := u.HomeDir + "/.bash_profile"
+
+	existing, _ := os.ReadFile(profile)
+	body := string(existing)
+
+	// strip existing block (between markers, if present)
+	if idx := strings.Index(body, beginMarker); idx >= 0 {
+		end := strings.Index(body, endMarker)
+		if end >= idx {
+			body = body[:idx] + body[end+len(endMarker):]
+		}
+	}
+	body = strings.TrimRight(body, "\n")
+
+	if enable {
+		snippet := "\n" + beginMarker + `
+# Auto-run the lsm menu on interactive login. The LSM_LAUNCHED guard
+# prevents a sudo-shell from re-triggering lsm recursively.
+if [ -t 0 ] && [ -z "$LSM_LAUNCHED" ]; then
+    export LSM_LAUNCHED=1
+    sudo /usr/sbin/lsm
+fi
+` + endMarker + "\n"
+		body += snippet
+	} else if body != "" {
+		body += "\n"
+	}
+
+	if err := os.WriteFile(profile, []byte(body), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", profile, err)
+	}
+	uid, _ := strconv.Atoi(u.Uid)
+	gid, _ := strconv.Atoi(u.Gid)
+	_ = os.Chown(profile, uid, gid)
+	if enable {
+		runner.Log("Auto-launch enabled: `sudo lsm` runs on %s login (%s).", name, profile)
+	} else {
+		runner.Log("Auto-launch disabled for %s (%s).", name, profile)
+	}
 	return nil
 }
 

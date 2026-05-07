@@ -1,27 +1,40 @@
-# lsm config — apenas intenção / preferências.
-# NÃO contém segredos (passwords são pedidas em runtime quando necessário).
-# NÃO contém whitelist de IPs (deriva-se do estado real do UFW).
+# lsm config — intent / preferences only.
+# Does NOT contain secrets (passwords are prompted at runtime).
+# Does NOT contain UFW whitelist (derived from the firewall itself).
 
 timezone: Europe/Lisbon
 
-# Hostname é opcional. Vazio → módulo hostname não corre.
+# Hostname is optional. Empty → hostname module won't run.
 hostname: srv01
-fqdn: srv01.exemplo.com
+fqdn: srv01.example.com
 
 ssh:
-  # Porta alternativa à 22 (reduz brute-force automatizado).
+  # Alternative port (reduces automated brute-force).
   port: 2210
-  # User não-root para administrar via SSH (com sudo).
-  # Password é pedida no momento de criar o user, não fica em ficheiro.
+  # Non-root admin user. Password is prompted when the user is created;
+  # nothing is stored on disk.
   user: dev24
 
 docker:
-  # User dedicado para correr containers em modo rootless.
+  # Dedicated user that runs containers in rootless mode.
   rootless_user: docker24
 
 network:
-  # Política para módulos que precisam de abrir portas em UFW:
-  #   ask   → pergunta caso a caso (recomendado)
-  #   true  → abre automaticamente
-  #   false → nunca abre (gestão manual)
+  # Policy for modules that need to open UFW ports:
+  #   ask   → prompt each time (recommended)
+  #   true  → open automatically
+  #   false → never open (manual UFW management)
   auto_open_ports: ask
+
+# Which optional modules to install on `lsm all` and on the post-wizard run.
+# firewall and ssh are always enabled (security baseline). The rest reflect
+# wizard answers and can be edited here later.
+modules:
+  firewall: true     # always true
+  ssh: true          # always true
+  sysctl: true
+  timesync: true
+  hostname: true
+  docker: true
+  fail2ban: true
+  upgrades: true

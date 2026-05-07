@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+// Sentinel return values for Choose / ChooseEx.
+const (
+	ChoiceExit = -1 // user typed 'x' / 'X'
+	ChoiceBack = -2 // user typed 'b' / 'B'
+)
+
 var stdin = bufio.NewReader(os.Stdin)
 
 func read() string {
@@ -42,7 +48,7 @@ func AskInt(question string, def int) int {
 		if err == nil {
 			return n
 		}
-		fmt.Println("Inteiro inválido, tenta de novo.")
+		fmt.Println("Invalid integer, try again.")
 	}
 }
 
@@ -60,23 +66,45 @@ func Confirm(question string, defYes bool) bool {
 	return a == "y" || a == "yes" || a == "s" || a == "sim"
 }
 
-// Choose displays a numbered menu and returns the chosen 1-based index.
+// Choose is a thin shim that calls ChooseEx without back/exit shortcuts.
+// Kept for legacy call-sites that don't need navigation letters.
 func Choose(question string, options []string) int {
+	return ChooseEx(question, options, false, false)
+}
+
+// ChooseEx renders a numbered menu plus optional letter shortcuts.
+// 'b' = back (when withBack), 'x' = exit (when withExit). Returns the
+// 1-based index for numeric input, or ChoiceBack / ChoiceExit for letters.
+func ChooseEx(question string, options []string, withBack, withExit bool) int {
 	for {
 		fmt.Println()
 		fmt.Println(question)
 		for i, o := range options {
 			fmt.Printf("  %d) %s\n", i+1, o)
 		}
-		a := strings.TrimSpace(Ask("Escolhe", ""))
+		switch {
+		case withBack && withExit:
+			fmt.Println("  b) back   x) exit")
+		case withBack:
+			fmt.Println("  b) back")
+		case withExit:
+			fmt.Println("  x) exit")
+		}
+		a := strings.ToLower(strings.TrimSpace(Ask("Choose", "")))
 		if a == "" {
 			continue
+		}
+		if withBack && (a == "b" || a == "back") {
+			return ChoiceBack
+		}
+		if withExit && (a == "x" || a == "exit" || a == "quit" || a == "q") {
+			return ChoiceExit
 		}
 		n, err := strconv.Atoi(a)
 		if err == nil && n >= 1 && n <= len(options) {
 			return n
 		}
-		fmt.Println("Opção inválida.")
+		fmt.Println("Invalid option.")
 	}
 }
 
@@ -90,18 +118,18 @@ func AskPassword(question string) string {
 		_ = exec.Command("stty", "-F", "/dev/tty", "echo").Run()
 		fmt.Println()
 		if pw1 == "" {
-			fmt.Println("Password vazia, tenta de novo.")
+			fmt.Println("Empty password, try again.")
 			continue
 		}
 
-		fmt.Print("Confirma password: ")
+		fmt.Print("Confirm password: ")
 		_ = exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
 		pw2 := read()
 		_ = exec.Command("stty", "-F", "/dev/tty", "echo").Run()
 		fmt.Println()
 
 		if pw1 != pw2 {
-			fmt.Println("Passwords não batem certo, tenta de novo.")
+			fmt.Println("Passwords don't match, try again.")
 			continue
 		}
 		return pw1
@@ -111,7 +139,7 @@ func AskPassword(question string) string {
 // Pause blocks until Enter is pressed (used between menu actions).
 func Pause(msg string) {
 	if msg == "" {
-		msg = "Pressiona Enter para continuar"
+		msg = "Press Enter to continue"
 	}
 	fmt.Printf("\n%s... ", msg)
 	read()
@@ -120,7 +148,7 @@ func Pause(msg string) {
 // AskIPOrCIDR prompts repeatedly until a valid IP or CIDR is entered. Empty cancels (returns "").
 func AskIPOrCIDR(question string) string {
 	for {
-		a := strings.TrimSpace(Ask(question+" (vazio cancela)", ""))
+		a := strings.TrimSpace(Ask(question+" (empty cancels)", ""))
 		if a == "" {
 			return ""
 		}
@@ -130,6 +158,6 @@ func AskIPOrCIDR(question string) string {
 		if _, _, err := net.ParseCIDR(a); err == nil {
 			return a
 		}
-		fmt.Println("IP/CIDR inválido (ex: 1.2.3.4 ou 10.0.0.0/24).")
+		fmt.Println("Invalid IP/CIDR (e.g. 1.2.3.4 or 10.0.0.0/24).")
 	}
 }

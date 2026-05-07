@@ -201,6 +201,25 @@ Padrão obrigatório (segue ssh.go ou fail2ban.go como template):
 
 ---
 
+## 8b. First-run bootstrap (sem config)
+
+Sequência quando `sudo lsm` corre e `/etc/lsm/config.yaml` não existe
+(invocação tem de ser admin):
+
+1. **System update**: `apt update + upgrade + autoremove + autoclean +
+   needrestart -r a -m a -q`. Apanha kernel/lib patches antes de
+   configurar firewall/ssh.
+2. Se `RebootRequired()` → prompt 3-way (now / 04:00 / defer). Em
+   qualquer escolha, lsm sai. Re-correr depois retoma daqui.
+3. Wizard (timezone, hostname, ssh user/port, docker user, política,
+   **lista de módulos opcionais**). SSH + firewall mandatory.
+4. `runAllModules()` respeitando `cfg.Modules.<X>` flags.
+5. Prompt: ativar auto-launch do menu para o ssh.user (escreve bloco
+   marcado em `~/.bash_profile`).
+
+`runMenu()` só lá vai parar quando config existe — caso contrário entra
+em bootstrap.
+
 ## 9. Módulos atuais (ordem em `lsm all`)
 
 | # | Cmd | O que faz | Lê do config |
@@ -231,11 +250,13 @@ Sub-cmds especiais:
 ## 10. Subcomandos top-level (todos)
 
 ```
-lsm                       # menu interativo
+lsm                       # menu interativo (English UI; 'b'=back, 'x'=exit)
 lsm init                  # wizard
 lsm validate              # audita estado vs config (read-only)
-lsm all                   # corre todos os módulos por ordem
-lsm update-server         # apt update + upgrade + autoremove + auto-restart
+lsm all                   # corre módulos selecionados em config.modules.*
+lsm system update         # apt update + upgrade + autoremove + auto-restart
+lsm system reboot         # reboot now / schedule 04:00 / defer
+lsm update-server         # alias hidden p/ system update (compat)
 lsm add-ip [IP]           # atalho: ALLOW from IP em TODAS as portas geridas
 lsm remove-ip [IP]        # atalho: DELETE allow from IP (com fallback p/ Anywhere)
 lsm port add <P>/<PROTO> [LABEL]    # registar + abrir (--restrict abre fechado)

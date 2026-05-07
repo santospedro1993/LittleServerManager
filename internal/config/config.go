@@ -17,8 +17,24 @@ type Config struct {
 	SSH      SSHConfig     `yaml:"ssh"`
 	Docker   DockerConfig  `yaml:"docker"`
 	Network  NetworkConfig `yaml:"network"`
+	Modules  ModulesConfig `yaml:"modules"`
 
 	path string `yaml:"-"`
+}
+
+// ModulesConfig records which optional modules the user opted into during
+// the wizard. firewall + ssh are mandatory and not configurable.
+// `lsm all` and the post-wizard auto-run respect these flags; individual
+// `lsm <module>` invocations always run regardless.
+type ModulesConfig struct {
+	Firewall bool `yaml:"firewall"`
+	SSH      bool `yaml:"ssh"`
+	Sysctl   bool `yaml:"sysctl"`
+	Timesync bool `yaml:"timesync"`
+	Hostname bool `yaml:"hostname"`
+	Docker   bool `yaml:"docker"`
+	Fail2ban bool `yaml:"fail2ban"`
+	Upgrades bool `yaml:"upgrades"`
 }
 
 type SSHConfig struct {
@@ -72,6 +88,9 @@ func (c *Config) validate() error {
 	if c.Timezone == "" {
 		c.Timezone = "Europe/Lisbon"
 	}
+	// firewall + ssh are mandatory regardless of what the file says.
+	c.Modules.Firewall = true
+	c.Modules.SSH = true
 	return nil
 }
 

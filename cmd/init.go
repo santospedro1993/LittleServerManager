@@ -34,17 +34,17 @@ func init() { rootCmd.AddCommand(initCmd) }
 
 // runWizard prompts the user for intent values and writes the config file.
 // Whitelist of IPs is NOT persisted to config — it's derived from UFW state
-// (use `lsm add-ip` after setup). Password for the SSH user is NOT persisted
-// either — it's prompted only when the user is actually created.
+// (use `lsm port allow` / `lsm add-ip` after setup). Password for the SSH
+// user is NOT persisted either — it's prompted when the user is created.
 func runWizard() error {
 	fmt.Println("╔════════════════════════════════════════════╗")
-	fmt.Println("║  Setup Inicial — Wizard                    ║")
+	fmt.Println("║  Initial Setup — Wizard                    ║")
 	fmt.Println("╚════════════════════════════════════════════╝")
 	fmt.Printf("Config file: %s\n\n", cfgFile)
 
 	if config.Exists(cfgFile) {
-		if !prompt.Confirm("Config já existe. Sobrescrever?", false) {
-			fmt.Println("Cancelado.")
+		if !prompt.Confirm("Config already exists. Overwrite?", false) {
+			fmt.Println("Cancelled.")
 			return nil
 		}
 	}
@@ -52,50 +52,66 @@ func runWizard() error {
 	c := &config.Config{}
 
 	fmt.Println("─── Timezone ─────────────────────────────────")
-	fmt.Println("Fuso horário do servidor. Afeta logs e ficheiros.")
-	fmt.Println("Ex: Europe/Lisbon, Europe/London, UTC.")
+	fmt.Println("Server timezone. Affects logs and timestamps.")
+	fmt.Println("e.g. Europe/Lisbon, Europe/London, UTC.")
 	c.Timezone = prompt.Ask("Timezone", "Europe/Lisbon")
 
 	fmt.Println()
 	fmt.Println("─── Hostname ─────────────────────────────────")
-	fmt.Println("Nome curto da máquina (aparece na shell e em logs).")
-	fmt.Println("Vazio = não tocar no hostname atual.")
-	c.Hostname = prompt.Ask("Hostname (vazio salta)", currentHostname())
+	fmt.Println("Short machine name (shown in shell prompts and logs).")
+	fmt.Println("Empty = leave current hostname untouched.")
+	c.Hostname = prompt.Ask("Hostname (empty skips)", currentHostname())
 	if c.Hostname != "" {
 		fmt.Println()
-		fmt.Println("FQDN = nome completo com domínio (ex: srv01.exemplo.com).")
-		fmt.Println("Vazio se não tens domínio configurado.")
-		c.FQDN = prompt.Ask("FQDN (vazio para nenhum)", "")
+		fmt.Println("FQDN = full name with domain (e.g. srv01.example.com).")
+		fmt.Println("Empty if you don't have a domain configured.")
+		c.FQDN = prompt.Ask("FQDN (empty for none)", "")
 	}
 
 	fmt.Println()
 	fmt.Println("─── SSH ──────────────────────────────────────")
-	fmt.Println("User não-root para administrar via SSH (com sudo).")
-	fmt.Println("Substitui login direto como root (que será bloqueado).")
+	fmt.Println("Non-root admin user for SSH. Replaces direct root login")
+	fmt.Println("(which will be disabled).")
 	c.SSH.User = prompt.Ask("Username", "dev24")
 	fmt.Println()
-	fmt.Println("Porta SSH alternativa (não-22). Reduz brute-force automatizado.")
-	fmt.Println("Tem de estar livre. 2210 é seguro como default.")
-	c.SSH.Port = prompt.AskInt("Porta SSH", 2210)
+	fmt.Println("SSH port (non-22 reduces automated brute-force attempts).")
+	fmt.Println("Must be free on the host. 2210 is a safe default.")
+	c.SSH.Port = prompt.AskInt("SSH port", 2210)
 
 	fmt.Println()
 	fmt.Println("─── Docker ───────────────────────────────────")
-	fmt.Println("User dedicado para correr containers em modo rootless.")
-	fmt.Println("Containers correm como este user, não como root.")
+	fmt.Println("Dedicated user that runs containers in rootless mode.")
+	fmt.Println("Containers run as this user, not root.")
 	c.Docker.RootlessUser = prompt.Ask("Docker rootless user", "docker24")
 
 	fmt.Println()
-	fmt.Println("─── Política de portas em UFW ────────────────")
-	fmt.Println("Quando módulos precisam de abrir uma porta na firewall:")
-	fmt.Println("  true  → abre sem perguntar (rápido)")
-	fmt.Println("  false → nunca abre (geres tu manualmente)")
-	fmt.Println("  ask   → pergunta caso a caso (mais seguro, recomendado)")
-	idx := prompt.Choose("Escolhe política", []string{
-		"ask   — perguntar caso a caso (recomendado)",
-		"true  — abrir automaticamente",
-		"false — não abrir nunca",
+	fmt.Println("─── UFW open-port policy ─────────────────────")
+	fmt.Println("When a module needs to open a firewall port:")
+	fmt.Println("  ask   → prompt each time (safer, recommended)")
+	fmt.Println("  true  → open automatically")
+	fmt.Println("  false → never open (you manage UFW manually)")
+	idx := prompt.Choose("Pick a policy", []string{
+		"ask   — prompt each time (recommended)",
+		"true  — open automatically",
+		"false — never open",
 	})
 	c.Network.AutoOpenPorts = []string{"ask", "true", "false"}[idx-1]
+
+	fmt.Println()
+	fmt.Println("─── Modules to install ───────────────────────")
+	fmt.Println("Pick which modules run after this wizard. SSH + firewall")
+	fmt.Println("are mandatory (the security baseline depends on them).")
+
+	c.Modules.Firewall = true
+	c.Modules.SSH = true
+	c.Modules.Sysctl = prompt.Confirm("Install module: sysctl  (kernel hardening)?", true)
+	c.Modules.Timesync = prompt.Confirm("Install module: timesync (NTP + timezone)?", true)
+	if c.Hostname != "" {
+		c.Modules.Hostname = prompt.Confirm("Install module: hostname (apply chosen hostname)?", true)
+	}
+	c.Modules.Docker = prompt.Confirm("Install module: docker   (engine + rootless user)?", true)
+	c.Modules.Fail2ban = prompt.Confirm("Install module: fail2ban (anti SSH brute-force)?", true)
+	c.Modules.Upgrades = prompt.Confirm("Install module: upgrades (unattended security patches)?", true)
 
 	c.SetPath(cfgFile)
 	if err := os.MkdirAll(filepath.Dir(cfgFile), 0755); err != nil {
@@ -104,11 +120,10 @@ func runWizard() error {
 	if err := c.Save(); err != nil {
 		return err
 	}
-	fmt.Printf("\nConfig escrita em %s\n", cfgFile)
+	fmt.Printf("\nConfig written to %s\n", cfgFile)
 	fmt.Println()
-	fmt.Println("Notas:")
-	fmt.Println("  • Password do user SSH é pedida no momento da criação (não fica em ficheiro).")
-	fmt.Println("  • Whitelist de IPs gere-se com 'lsm add-ip <IP>' / 'lsm remove-ip <IP>'.")
-	fmt.Println("    A firewall (UFW) é a fonte da verdade.")
+	fmt.Println("Notes:")
+	fmt.Println("  • SSH password is requested at user creation time (not stored on disk).")
+	fmt.Println("  • IP whitelist is managed via `lsm port allow` (UFW is the source of truth).")
 	return nil
 }

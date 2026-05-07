@@ -6,266 +6,405 @@ import (
 
 	"lsm/internal/config"
 	"lsm/internal/prompt"
+	sshmod "lsm/internal/ssh"
 	"lsm/internal/state"
+	"lsm/internal/sysupdate"
 	"lsm/internal/ufw"
 )
 
 // runMenu drives the interactive flow when lsm is invoked with no subcommand.
-// Menu options are filtered by the caller's role: admin (real root login)
-// sees everything; operator (sudo from non-root) sees only safe actions.
+// Menu options are filtered by role (admin = real root, operator = sudo from
+// non-root). Submenus group related actions; numeric input picks an option,
+// 'b' goes back, 'x' exits.
 func runMenu() error {
 	admin := RequireAdmin() == nil
 
 	if !config.Exists(cfgFile) {
 		if !admin {
-			return fmt.Errorf("config não existe em %s — setup inicial requer login direto como root", cfgFile)
+			return fmt.Errorf("config not found at %s — initial setup requires direct root login", cfgFile)
 		}
-		fmt.Println("Nenhuma config encontrada em", cfgFile)
-		fmt.Println("→ A iniciar Setup Inicial.")
-		fmt.Println()
-		if err := runWizard(); err != nil {
-			return err
-		}
-		if !prompt.Confirm("Correr 'firewall + ssh + docker' agora?", true) {
-			return nil
-		}
-		return runAllModules()
+		return runBootstrap()
 	}
 
 	for {
-		fmt.Println()
-		fmt.Println("╔═══════════════════════════════════════════╗")
-		fmt.Println("║  lsm — menu                               ║")
-		fmt.Printf("║  config: %-33s║\n", cfgFile)
-		role := "operator (sudo)"
-		if admin {
-			role = "admin (root)"
-		}
-		fmt.Printf("║  role:   %-33s║\n", role)
-		fmt.Println("╚═══════════════════════════════════════════╝")
+		printHeader(admin)
 
-		var options []string
-		var actions []func() error
-		options = append(options, "Validar setup")
-		actions = append(actions, runValidate)
-		options = append(options, "Atualizar servidor (apt update + upgrade + autoremove)")
-		actions = append(actions, runUpdateServer)
-		options = append(options, "Ver IPs / portas geridas")
-		actions = append(actions, showOverview)
+		var labels []string
+		var actions []func() (ran bool, err error)
+
+		// always-available
+		labels = append(labels, "Validate setup")
+		actions = append(actions, wrap(func() error { _, _, e := runValidate(); return e }))
+
+		labels = append(labels, "System  →  update / reboot")
+		actions = append(actions, wrapSub(systemMenu))
+
+		labels = append(labels, "Network  →  ports / firewall whitelist")
+		actions = append(actions, wrapSub(networkMenu(admin)))
 
 		if admin {
-			options = append(options, "Correr módulo (firewall / ssh / docker / all)")
-			actions = append(actions, chooseAndRunModule)
-			options = append(options, "Gerir portas (add / remove / allow / revoke / list)")
-			actions = append(actions, portMenu)
-			options = append(options, "Adicionar IP a TODAS as portas geridas (atalho global)")
-			actions = append(actions, func() error {
-				ip := prompt.AskIPOrCIDR("IP/CIDR a adicionar")
-				if ip == "" {
-					return nil
-				}
-				return addIP(ip)
-			})
-			options = append(options, "Remover IP de TODAS as portas geridas (atalho global)")
-			actions = append(actions, interactiveRemoveIP)
-			options = append(options, "Re-correr Setup Inicial (sobrescreve config)")
-			actions = append(actions, runWizard)
-		}
-		options = append(options, "Sair")
+			labels = append(labels, "Modules  →  re-run any module")
+			actions = append(actions, wrapSub(modulesMenu))
 
-		idx := prompt.Choose("Que ação?", options)
-		if idx == len(options) {
+			labels = append(labels, "Check & Fix  →  re-run modules whose checks failed")
+			actions = append(actions, wrap(runCheckAndFix))
+
+			labels = append(labels, "Setup wizard (overwrites config)")
+			actions = append(actions, wrap(runWizard))
+		}
+
+		idx := prompt.ChooseEx("Action?", labels, false, true)
+		if idx == prompt.ChoiceExit {
 			return nil
 		}
 
+		ran, err := actions[idx-1]()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
+		if ran {
+			fmt.Println("────────────────────────────────────────────")
+			if !admin {
+				fmt.Println("(destructive operations require direct root login)")
+			}
+			prompt.Pause("")
+		}
+	}
+}
+
+// runBootstrap is the first-run flow when no config exists. Steps:
+//
+//  1. apt update + upgrade + autoremove. If a reboot is required, prompt.
+//     If user reboots, lsm exits — they re-run after reboot and we resume
+//     here (config still missing, so this flow re-enters at step 1, which
+//     is now a no-op since the system is up to date).
+//  2. Wizard (timezone, hostname, ssh user/port, docker user, modules).
+//  3. Run selected modules.
+//  4. Offer to make `sudo lsm` auto-launch on the SSH user's login.
+func runBootstrap() error {
+	fmt.Println("╔════════════════════════════════════════════╗")
+	fmt.Println("║  lsm — first-run bootstrap                 ║")
+	fmt.Println("╚════════════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Println("Step 1/3: System update (apt update / upgrade / autoremove).")
+	fmt.Println("This catches kernel/security patches before we configure anything.")
+	if err := runSystemUpdate(); err != nil {
+		return fmt.Errorf("system update failed: %w", err)
+	}
+	if need, _ := sysupdate.RebootRequired(); need {
+		fmt.Println()
+		fmt.Println("⚠ Reboot recommended before continuing setup.")
+		fmt.Println("  After rebooting, re-run `sudo lsm` to resume here.")
+		if err := promptReboot(); err != nil {
+			return err
+		}
+		// Whether the user picked "now", "schedule", or "defer", we stop
+		// the bootstrap here. Re-running lsm later (no config) lands back
+		// in this flow.
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Println("Step 2/3: Wizard.")
+	if err := runWizard(); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("Step 3/3: Run selected modules.")
+	if !prompt.Confirm("Run them now?", true) {
+		return nil
+	}
+	if err := runAllModules(); err != nil {
+		return err
+	}
+
+	// Offer auto-launch. Loaded fresh because wizard saved cfg.SSH.User.
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return nil // setup succeeded; auto-launch is optional
+	}
+	fmt.Println()
+	fmt.Println("─── Auto-launch on login ─────────────────────")
+	fmt.Println("Add a snippet to ~/.bash_profile so that whenever")
+	fmt.Printf("'%s' logs in via SSH, the lsm menu opens automatically.\n", cfg.SSH.User)
+	fmt.Println("(They can press 'x' to exit and drop into a regular shell.)")
+	if prompt.Confirm("Enable auto-launch for "+cfg.SSH.User+"?", true) {
+		if err := sshmod.SetAutoLaunchLSM(cfg.SSH.User, true); err != nil {
+			fmt.Fprintln(os.Stderr, "auto-launch:", err)
+		}
+	}
+	return nil
+}
+
+func printHeader(admin bool) {
+	fmt.Println()
+	fmt.Println("╔═══════════════════════════════════════════╗")
+	fmt.Println("║  lsm — menu                               ║")
+	fmt.Printf("║  config: %-33s║\n", cfgFile)
+	role := "operator (sudo)"
+	if admin {
+		role = "admin (root)"
+	}
+	fmt.Printf("║  role:   %-33s║\n", role)
+	fmt.Println("╚═══════════════════════════════════════════╝")
+}
+
+// wrap turns a plain action into one that signals "did run, please pause".
+func wrap(fn func() error) func() (bool, error) {
+	return func() (bool, error) {
 		fmt.Println()
 		fmt.Println("─── output ─────────────────────────────────")
-		err := actions[idx-1]()
+		return true, fn()
+	}
+}
+
+// wrapSub runs a submenu function. Submenus handle their own pacing, so the
+// outer loop should NOT pause after — that's why we return ran=false.
+func wrapSub(fn func() error) func() (bool, error) {
+	return func() (bool, error) { return false, fn() }
+}
+
+// systemMenu — update + reboot. Available to both admin and operator.
+func systemMenu() error {
+	for {
+		idx := prompt.ChooseEx("System", []string{
+			"Run system update (apt update + upgrade + autoremove)",
+			"Reboot server (now / schedule / cancel)",
+		}, true, false)
+		switch idx {
+		case prompt.ChoiceBack:
+			return nil
+		case 1:
+			fmt.Println("─── output ─────────────────────────────────")
+			if err := runSystemUpdate(); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			fmt.Println("────────────────────────────────────────────")
+			prompt.Pause("")
+		case 2:
+			fmt.Println("─── output ─────────────────────────────────")
+			if err := promptReboot(); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			fmt.Println("────────────────────────────────────────────")
+			prompt.Pause("")
+		}
+	}
+}
+
+// networkMenu — ports list (read-only for operator), full management for admin.
+func networkMenu(admin bool) func() error {
+	return func() error {
+		for {
+			labels := []string{"List managed ports + UFW sources"}
+			actions := []func() error{showOverview}
+
+			if admin {
+				labels = append(labels,
+					"Add port (open + register)",
+					"Remove port (close + unregister)",
+					"Allow IP on a specific port",
+					"Revoke IP from a specific port",
+					"Allow IP on ALL managed ports (shortcut)",
+					"Revoke IP from ALL managed ports (shortcut)",
+				)
+				actions = append(actions,
+					interactivePortAdd,
+					interactivePortRemove,
+					interactivePortAllow,
+					interactivePortRevoke,
+					interactiveAllowAll,
+					interactiveRevokeAll,
+				)
+			}
+
+			idx := prompt.ChooseEx("Network", labels, true, false)
+			if idx == prompt.ChoiceBack {
+				return nil
+			}
+			fmt.Println("─── output ─────────────────────────────────")
+			if err := actions[idx-1](); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			fmt.Println("────────────────────────────────────────────")
+			prompt.Pause("")
+		}
+	}
+}
+
+// modulesMenu — re-run any single module or `all`.
+func modulesMenu() error {
+	for {
+		idx := prompt.ChooseEx("Modules", []string{
+			"firewall  (UFW bootstrap)",
+			"ssh       (hardening + open port)",
+			"docker    (install + rootless)",
+			"fail2ban  (anti brute-force SSH)",
+			"upgrades  (unattended security patches)",
+			"timesync  (systemd-timesyncd + timezone)",
+			"sysctl    (kernel hardening + tuning)",
+			"hostname  (set hostname + /etc/hosts)",
+			"all       (run everything in order)",
+		}, true, false)
+		if idx == prompt.ChoiceBack {
+			return nil
+		}
+		fmt.Println("─── output ─────────────────────────────────")
+		var err error
+		switch idx {
+		case 1:
+			err = firewallCmd.RunE(firewallCmd, nil)
+		case 2:
+			err = sshCmd.RunE(sshCmd, nil)
+		case 3:
+			err = dockerCmd.RunE(dockerCmd, nil)
+		case 4:
+			err = fail2banCmd.RunE(fail2banCmd, nil)
+		case 5:
+			err = upgradesCmd.RunE(upgradesCmd, nil)
+		case 6:
+			err = timesyncCmd.RunE(timesyncCmd, nil)
+		case 7:
+			err = sysctlCmd.RunE(sysctlCmd, nil)
+		case 8:
+			err = hostnameCmd.RunE(hostnameCmd, nil)
+		case 9:
+			err = runAllModules()
+		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "erro:", err)
+			fmt.Fprintln(os.Stderr, "error:", err)
 		}
 		fmt.Println("────────────────────────────────────────────")
-		if !admin {
-			fmt.Println("(operações destrutivas requerem login direto como root)")
-		}
 		prompt.Pause("")
 	}
 }
 
-func chooseAndRunModule() error {
-	idx := prompt.Choose("Módulo", []string{
-		"firewall  (UFW bootstrap)",
-		"ssh       (hardening + abrir porta)",
-		"docker    (install + rootless)",
-		"fail2ban  (anti brute-force SSH)",
-		"upgrades  (unattended security patches)",
-		"timesync  (systemd-timesyncd + timezone)",
-		"sysctl    (kernel hardening + tuning)",
-		"hostname  (set hostname + /etc/hosts)",
-		"all       (corre todos por ordem)",
-		"voltar",
-	})
-	switch idx {
-	case 1:
-		return firewallCmd.RunE(firewallCmd, nil)
-	case 2:
-		return sshCmd.RunE(sshCmd, nil)
-	case 3:
-		return dockerCmd.RunE(dockerCmd, nil)
-	case 4:
-		return fail2banCmd.RunE(fail2banCmd, nil)
-	case 5:
-		return upgradesCmd.RunE(upgradesCmd, nil)
-	case 6:
-		return timesyncCmd.RunE(timesyncCmd, nil)
-	case 7:
-		return sysctlCmd.RunE(sysctlCmd, nil)
-	case 8:
-		return hostnameCmd.RunE(hostnameCmd, nil)
-	case 9:
-		return runAllModules()
+// runCheckAndFix runs validate, then offers to re-run modules with failures.
+func runCheckAndFix() error {
+	failed, n, _ := runValidate()
+	if n == 0 {
+		fmt.Println("\nNothing to fix — all checks pass.")
+		return nil
 	}
-	return nil
-}
-
-func runAllModules() error {
-	cfg, _ := config.Load(cfgFile)
-
-	type mod struct {
-		name string
-		skip bool
-		fn   func() error
+	if len(failed) == 0 {
+		fmt.Println("\nFailures detected but not tied to a known module — fix manually.")
+		return nil
 	}
-	mods := []mod{
-		{name: "firewall", fn: func() error { return firewallCmd.RunE(firewallCmd, nil) }},
-		{name: "timesync", fn: func() error { return timesyncCmd.RunE(timesyncCmd, nil) }},
-		{name: "sysctl", fn: func() error { return sysctlCmd.RunE(sysctlCmd, nil) }},
-		{name: "hostname", skip: cfg == nil || cfg.Hostname == "",
-			fn: func() error { return hostnameCmd.RunE(hostnameCmd, nil) }},
-		{name: "ssh", fn: func() error { return sshCmd.RunE(sshCmd, nil) }},
-		{name: "docker", fn: func() error { return dockerCmd.RunE(dockerCmd, nil) }},
-		{name: "fail2ban", fn: func() error { return fail2banCmd.RunE(fail2banCmd, nil) }},
-		{name: "upgrades", fn: func() error { return upgradesCmd.RunE(upgradesCmd, nil) }},
+	fmt.Printf("\nModules with failed checks: %v\n", failed)
+	if !prompt.Confirm("Re-run those modules to apply fixes?", true) {
+		return nil
 	}
-	for _, m := range mods {
-		if m.skip {
-			fmt.Printf("[skip] %s — não configurado\n", m.name)
+	runners := moduleRunners()
+	for _, m := range failed {
+		fn, ok := runners[m]
+		if !ok {
+			fmt.Printf("(no runner for module %q — skipped)\n", m)
 			continue
 		}
-		if err := m.fn(); err != nil {
-			return fmt.Errorf("%s: %w", m.name, err)
+		fmt.Printf("\n=== Re-running %s ===\n", m)
+		if err := fn(); err != nil {
+			fmt.Fprintf(os.Stderr, "error in %s: %v\n", m, err)
 		}
 	}
+	fmt.Println("\nRe-validating...")
+	_, _, _ = runValidate()
 	return nil
 }
 
-func portMenu() error {
-	for {
-		idx := prompt.Choose("Gerir portas", []string{
-			"Listar portas geridas + sources UFW",
-			"Adicionar porta",
-			"Remover porta",
-			"Permitir IP numa porta específica",
-			"Revogar IP numa porta específica",
-			"voltar",
-		})
-		switch idx {
-		case 1:
-			if err := portList(); err != nil {
-				return err
-			}
-		case 2:
-			spec := prompt.Ask("PORT/PROTO (ex: 3306/tcp)", "")
-			if spec == "" {
-				continue
-			}
-			port, proto, err := parsePortProto(spec)
-			if err != nil {
-				fmt.Println("erro:", err)
-				continue
-			}
-			label := prompt.Ask("Label", spec)
-			restrict := prompt.Confirm("Adicionar fechado (sem ALLOW Anywhere) e dar acesso por IP depois?", false)
-			if err := portAdd(port, proto, label, restrict); err != nil {
-				return err
-			}
-		case 3:
-			port, proto, ok := pickManagedPort("Remover qual porta?")
-			if !ok {
-				continue
-			}
-			if !prompt.Confirm(fmt.Sprintf("Confirmas remover %d/%s?", port, proto), false) {
-				continue
-			}
-			if err := portRemove(port, proto); err != nil {
-				return err
-			}
-		case 4:
-			port, proto, ok := pickManagedPort("Permitir IP em qual porta?")
-			if !ok {
-				continue
-			}
-			ip := prompt.AskIPOrCIDR("IP/CIDR a permitir")
-			if ip == "" {
-				continue
-			}
-			if err := portAllow(port, proto, ip); err != nil {
-				return err
-			}
-		case 5:
-			port, proto, ok := pickManagedPort("Revogar IP em qual porta?")
-			if !ok {
-				continue
-			}
-			srcs := ufw.SpecificSources(port, proto)
-			if len(srcs) == 0 {
-				fmt.Println("Sem IPs específicos — porta aberta a todos ou sem regras.")
-				continue
-			}
-			i := prompt.Choose("Qual IP revogar?", append(srcs, "voltar"))
-			if i == len(srcs)+1 {
-				continue
-			}
-			if err := portRevoke(port, proto, srcs[i-1]); err != nil {
-				return err
-			}
-		case 6:
-			return nil
-		}
+// --- interactive helpers used by networkMenu ---
+
+func interactivePortAdd() error {
+	spec := prompt.Ask("PORT/PROTO (e.g. 3306/tcp)", "")
+	if spec == "" {
+		return nil
 	}
+	port, proto, err := parsePortProto(spec)
+	if err != nil {
+		return err
+	}
+	label := prompt.Ask("Label", spec)
+	restrict := prompt.Confirm("Add closed (no Anywhere rule), grant per-IP later?", false)
+	return portAdd(port, proto, label, restrict)
+}
+
+func interactivePortRemove() error {
+	port, proto, ok := pickManagedPort("Remove which port?")
+	if !ok {
+		return nil
+	}
+	if !prompt.Confirm(fmt.Sprintf("Confirm remove %d/%s?", port, proto), false) {
+		return nil
+	}
+	return portRemove(port, proto)
+}
+
+func interactivePortAllow() error {
+	port, proto, ok := pickManagedPort("Allow IP on which port?")
+	if !ok {
+		return nil
+	}
+	ip := prompt.AskIPOrCIDR("IP/CIDR to allow")
+	if ip == "" {
+		return nil
+	}
+	return portAllow(port, proto, ip)
+}
+
+func interactivePortRevoke() error {
+	port, proto, ok := pickManagedPort("Revoke IP from which port?")
+	if !ok {
+		return nil
+	}
+	srcs := ufw.SpecificSources(port, proto)
+	if len(srcs) == 0 {
+		fmt.Println("No specific IPs — port is open to all or has no rules.")
+		return nil
+	}
+	i := prompt.ChooseEx("Which IP to revoke?", srcs, true, false)
+	if i == prompt.ChoiceBack {
+		return nil
+	}
+	return portRevoke(port, proto, srcs[i-1])
+}
+
+func interactiveAllowAll() error {
+	ip := prompt.AskIPOrCIDR("IP/CIDR to allow on ALL managed ports")
+	if ip == "" {
+		return nil
+	}
+	return addIP(ip)
+}
+
+func interactiveRevokeAll() error {
+	cur := currentWhitelist()
+	if len(cur) == 0 {
+		fmt.Println("No specific IPs across managed ports.")
+		return nil
+	}
+	idx := prompt.ChooseEx("Revoke which IP from ALL managed ports?", cur, true, false)
+	if idx == prompt.ChoiceBack {
+		return nil
+	}
+	return removeIP(cur[idx-1])
 }
 
 func pickManagedPort(question string) (int, string, bool) {
 	st, err := state.Load(cfgFile)
 	if err != nil || len(st.ManagedPorts) == 0 {
-		fmt.Println("Sem portas geridas.")
+		fmt.Println("No managed ports.")
 		return 0, "", false
 	}
-	opts := make([]string, 0, len(st.ManagedPorts)+1)
+	opts := make([]string, 0, len(st.ManagedPorts))
 	for _, p := range st.ManagedPorts {
 		opts = append(opts, fmt.Sprintf("%d/%s — %s", p.Port, p.Proto, p.Label))
 	}
-	opts = append(opts, "voltar")
-	idx := prompt.Choose(question, opts)
-	if idx == len(opts) {
+	idx := prompt.ChooseEx(question, opts, true, false)
+	if idx == prompt.ChoiceBack {
 		return 0, "", false
 	}
 	p := st.ManagedPorts[idx-1]
 	return p.Port, p.Proto, true
-}
-
-func interactiveRemoveIP() error {
-	cur := currentWhitelist()
-	if len(cur) == 0 {
-		fmt.Println("Nenhum IP específico em portas geridas (UFW).")
-		return nil
-	}
-	opts := append(append([]string{}, cur...), "voltar")
-	idx := prompt.Choose("Remover qual IP?", opts)
-	if idx == len(opts) {
-		return nil
-	}
-	return removeIP(cur[idx-1])
 }
 
 func showOverview() error {
@@ -279,20 +418,20 @@ func showOverview() error {
 	}
 
 	fmt.Println()
-	fmt.Println("--- Portas geridas + estado UFW ---")
+	fmt.Println("--- Managed ports + UFW state ---")
 	if len(st.ManagedPorts) == 0 {
-		fmt.Println("  (nenhuma — corre os módulos primeiro)")
+		fmt.Println("  (none — run modules first)")
 	} else {
 		for _, p := range st.ManagedPorts {
 			srcs := ufw.AllowedSources(p.Port, p.Proto)
 			if len(srcs) == 0 {
-				fmt.Printf("  - %d/%s  %s — [sem regra UFW]\n", p.Port, p.Proto, p.Label)
+				fmt.Printf("  - %d/%s  %s — [no UFW rule]\n", p.Port, p.Proto, p.Label)
 				continue
 			}
 			fmt.Printf("  - %d/%s  %s\n", p.Port, p.Proto, p.Label)
 			for _, s := range srcs {
 				if s == "Anywhere" {
-					fmt.Printf("      • Anywhere (aberta a todos)\n")
+					fmt.Printf("      • Anywhere (open to all)\n")
 				} else {
 					fmt.Printf("      • %s\n", s)
 				}
@@ -301,10 +440,10 @@ func showOverview() error {
 	}
 
 	fmt.Println()
-	fmt.Println("--- Whitelist efetiva (união entre portas geridas) ---")
+	fmt.Println("--- Effective whitelist (union across managed ports) ---")
 	wl := currentWhitelist()
 	if len(wl) == 0 {
-		fmt.Println("  (sem IPs específicos — portas abertas a todos ou sem regras)")
+		fmt.Println("  (no specific IPs — ports open to all or no rules)")
 	} else {
 		for _, ip := range wl {
 			fmt.Printf("  - %s\n", ip)
@@ -312,9 +451,9 @@ func showOverview() error {
 	}
 
 	fmt.Println()
-	fmt.Println("--- Módulos instalados pelo lsm ---")
+	fmt.Println("--- Modules installed by lsm ---")
 	if len(st.InstalledModules) == 0 {
-		fmt.Println("  (nenhum)")
+		fmt.Println("  (none)")
 	} else {
 		for _, m := range st.InstalledModules {
 			fmt.Printf("  - %s\n", m)
@@ -322,7 +461,45 @@ func showOverview() error {
 	}
 
 	fmt.Println()
-	fmt.Println("--- Política ---")
+	fmt.Println("--- Policy ---")
 	fmt.Println("  auto_open_ports:", cfg.Network.AutoOpenPorts)
+	return nil
+}
+
+// chooseAndRunModule and runAllModules retained for `lsm all` and other callers.
+
+// runAllModules runs the modules selected during the wizard, in safe order
+// (firewall first, ssh after firewall, etc). Modules disabled in
+// cfg.Modules are skipped silently — the user already chose during wizard.
+func runAllModules() error {
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return err
+	}
+
+	type mod struct {
+		name    string
+		enabled bool
+		fn      func() error
+	}
+	mods := []mod{
+		{"firewall", cfg.Modules.Firewall, func() error { return firewallCmd.RunE(firewallCmd, nil) }},
+		{"ssh", cfg.Modules.SSH, func() error { return sshCmd.RunE(sshCmd, nil) }},
+		{"timesync", cfg.Modules.Timesync, func() error { return timesyncCmd.RunE(timesyncCmd, nil) }},
+		{"sysctl", cfg.Modules.Sysctl, func() error { return sysctlCmd.RunE(sysctlCmd, nil) }},
+		{"hostname", cfg.Modules.Hostname && cfg.Hostname != "", func() error { return hostnameCmd.RunE(hostnameCmd, nil) }},
+		{"docker", cfg.Modules.Docker, func() error { return dockerCmd.RunE(dockerCmd, nil) }},
+		{"fail2ban", cfg.Modules.Fail2ban, func() error { return fail2banCmd.RunE(fail2banCmd, nil) }},
+		{"upgrades", cfg.Modules.Upgrades, func() error { return upgradesCmd.RunE(upgradesCmd, nil) }},
+	}
+	for _, m := range mods {
+		if !m.enabled {
+			fmt.Printf("[skip] %s — disabled in config.modules\n", m.name)
+			continue
+		}
+		if err := m.fn(); err != nil {
+			return fmt.Errorf("%s: %w", m.name, err)
+		}
+	}
 	return nil
 }
