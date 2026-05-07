@@ -52,9 +52,9 @@ func runSystemUpdate() error {
 		return err
 	}
 
-	runner.Section("system update: ensure needrestart")
+	runner.Section("system update: configure needrestart (list-only, no inline restarts)")
 	if err := sysupdate.EnsureNeedrestart(); err != nil {
-		runner.Log("warning: needrestart not installed (%v) — services may keep outdated libs until reboot.", err)
+		runner.Log("warning: needrestart not installed (%v) — service-restart detection limited to /var/run/reboot-required.", err)
 	}
 
 	runner.Section("system update: apt update")
@@ -77,28 +77,45 @@ func runSystemUpdate() error {
 		runner.Log("autoclean failed (non-critical): %v", err)
 	}
 
-	runner.Section("system update: restart services with outdated libs")
-	if ran, err := sysupdate.RestartPending(); err != nil {
-		runner.Log("needrestart failed: %v", err)
-	} else if !ran {
-		runner.Log("needrestart not available — skipping auto-restart.")
-	} else {
-		runner.Log("Services with outdated libs restarted.")
+	// Detection only — never restart services inline. Restarting things like
+	// dbus or systemd-logind during a provisioning run can drop the sshd
+	// session we're running through. Whole-server reboot is the safe answer.
+	runner.Section("system update: detect services using outdated libs")
+	pending, _ := sysupdate.PendingRestarts()
+	rebootNeeded, rebootPkgs := sysupdate.RebootRequired()
+
+	if !pending.HasAny() && !rebootNeeded {
+		runner.Log("No restarts pending.")
+		return nil
 	}
 
-	if need, pkgs := sysupdate.RebootRequired(); need {
-		fmt.Println()
-		fmt.Println("⚠ Kernel/libc upgraded — server reboot recommended.")
-		if len(pkgs) > 0 {
-			fmt.Println("  Packages requesting reboot:")
-			for _, p := range pkgs {
-				fmt.Printf("   • %s\n", p)
+	fmt.Println()
+	fmt.Println("⚠ Restart conditions detected:")
+	if rebootNeeded {
+		fmt.Println("  • /var/run/reboot-required is set (kernel/libc upgrade).")
+		if len(rebootPkgs) > 0 {
+			fmt.Println("    Packages requesting reboot:")
+			for _, p := range rebootPkgs {
+				fmt.Printf("      - %s\n", p)
 			}
 		}
-		return promptReboot()
 	}
-	runner.Log("No reboot pending.")
-	return nil
+	if pending.KernelStale {
+		fmt.Println("  • Running kernel differs from the installed one.")
+	}
+	if pending.MicrocodeStale {
+		fmt.Println("  • CPU microcode update pending.")
+	}
+	if len(pending.Services) > 0 {
+		fmt.Println("  • Services running with outdated libraries:")
+		for _, s := range pending.Services {
+			fmt.Printf("      - %s\n", s)
+		}
+	}
+	fmt.Println()
+	fmt.Println("lsm doesn't restart services individually (risk of dropping the")
+	fmt.Println("active sshd session). A full reboot resolves all of the above.")
+	return promptReboot()
 }
 
 func promptReboot() error {

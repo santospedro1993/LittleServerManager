@@ -30,25 +30,89 @@ func AutoClean() error {
 	return aptGet("autoclean", "-y", "-qq")
 }
 
-// RestartPending uses needrestart (if available) to restart services that
-// loaded outdated libraries during the upgrade. Returns true if it ran.
-// Avoids prompting; reboots are never triggered automatically.
-func RestartPending() (bool, error) {
+// EnsureNeedrestart installs needrestart if missing AND drops a config
+// snippet that flips it into list-only mode. We use needrestart for
+// detection — never to restart services. The whole-server reboot prompt
+// driven from PendingRestarts() is the only escalation we offer.
+func EnsureNeedrestart() error {
 	if !runner.HasCommand("needrestart") {
-		return false, nil
+		if err := aptGet("install", "-y", "-qq", "needrestart"); err != nil {
+			return err
+		}
 	}
-	// -r a: automatically restart services
-	// -q  : quiet
-	// -m a: mode auto (no interactive prompts)
-	return true, runner.Run("needrestart", "-r", "a", "-m", "a", "-q")
+	return WriteNeedrestartConfig()
 }
 
-// EnsureNeedrestart installs needrestart if missing (best-effort).
-func EnsureNeedrestart() error {
-	if runner.HasCommand("needrestart") {
-		return nil
+// WriteNeedrestartConfig drops /etc/needrestart/conf.d/99-lsm.conf so the
+// apt-integrated needrestart hook never tries to restart services and never
+// shows the interactive "Which services should be restarted?" dialog.
+// We do detection ourselves after the upgrade and ask the user about a full
+// reboot — restarting individual daemons inline is too risky for a
+// provisioning tool (e.g. dbus.service restart can drop sshd sessions).
+func WriteNeedrestartConfig() error {
+	const path = "/etc/needrestart/conf.d/99-lsm.conf"
+	body := `# Managed by lsm — list-only mode.
+# lsm reads pending restarts via 'needrestart -b -p' and prompts for a full
+# reboot; we never let the apt hook restart services inline.
+$nrconf{restart} = 'l';
+$nrconf{kernelhints} = -1;
+$nrconf{ucodehints} = 0;
+`
+	// Best-effort: directory may not exist if needrestart was just queued for
+	// install in the same dpkg run. The config drop-in is read at next
+	// invocation.
+	_ = os.MkdirAll("/etc/needrestart/conf.d", 0755)
+	return os.WriteFile(path, []byte(body), 0644)
+}
+
+// PendingRestart summarises what needrestart reports after an upgrade.
+type PendingRestart struct {
+	Services      []string // user-visible systemd units that loaded old libs
+	KernelStale   bool     // running kernel != on-disk kernel
+	MicrocodeStale bool    // CPU microcode update pending
+}
+
+// HasAny reports whether any reboot-worthy condition is present.
+func (p PendingRestart) HasAny() bool {
+	return len(p.Services) > 0 || p.KernelStale || p.MicrocodeStale
+}
+
+// PendingRestarts parses `needrestart -b -p` (batch + brief, machine-readable)
+// and returns the structured result. Returns zero value if needrestart is
+// missing — callers should treat that as "unknown, don't recommend reboot".
+func PendingRestarts() (PendingRestart, error) {
+	var p PendingRestart
+	if !runner.HasCommand("needrestart") {
+		return p, nil
 	}
-	return aptGet("install", "-y", "-qq", "needrestart")
+	out, err := runner.Capture("needrestart", "-b", "-p")
+	// needrestart exits non-zero (1 = pending, 2 = kernel pending, 3 = both)
+	// to signal status — that's not a real error for us. We still parse out.
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "NEEDRESTART-SVC:"):
+			svc := strings.TrimSpace(strings.TrimPrefix(line, "NEEDRESTART-SVC:"))
+			if svc != "" {
+				p.Services = append(p.Services, svc)
+			}
+		case strings.HasPrefix(line, "NEEDRESTART-KSTA:"):
+			// 1=ok, 2=ABI compat new kernel, 3=version mismatch
+			val := strings.TrimSpace(strings.TrimPrefix(line, "NEEDRESTART-KSTA:"))
+			if val != "" && val != "1" {
+				p.KernelStale = true
+			}
+		case strings.HasPrefix(line, "NEEDRESTART-UCSTA:"):
+			val := strings.TrimSpace(strings.TrimPrefix(line, "NEEDRESTART-UCSTA:"))
+			if val != "" && val != "1" {
+				p.MicrocodeStale = true
+			}
+		}
+	}
+	if err != nil && len(out) == 0 {
+		return p, err
+	}
+	return p, nil
 }
 
 // RebootNow triggers an immediate reboot via systemd.
@@ -95,9 +159,14 @@ func RebootRequired() (bool, []string) {
 func aptGet(args ...string) error {
 	full := append([]string{"apt-get"}, args...)
 	return runner.RunEnv(map[string]string{
-		"DEBIAN_FRONTEND":              "noninteractive",
-		"NEEDRESTART_MODE":             "a",
-		"NEEDRESTART_SUSPEND":          "1",
-		"APT_LISTCHANGES_FRONTEND":     "none",
+		"DEBIAN_FRONTEND":          "noninteractive",
+		// NEEDRESTART_MODE=l + NEEDRESTART_SUSPEND=1 keep the apt hook from
+		// ever showing the "Which services should be restarted?" dialog.
+		// The drop-in at /etc/needrestart/conf.d/99-lsm.conf is the durable
+		// guarantee; these env vars are belt-and-braces for the first run
+		// before the drop-in lands.
+		"NEEDRESTART_MODE":         "l",
+		"NEEDRESTART_SUSPEND":      "1",
+		"APT_LISTCHANGES_FRONTEND": "none",
 	}, full[0], full[1:]...)
 }
