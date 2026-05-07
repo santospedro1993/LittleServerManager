@@ -33,26 +33,26 @@ func runMenu() error {
 		var actions []func() (ran bool, err error)
 
 		// always-available
-		labels = append(labels, "Status  →  CPU / RAM / disk / network (snapshot or --live)")
+		labels = append(labels, "Status")
 		actions = append(actions, wrapSub(statusMenu))
 
-		labels = append(labels, "Validate setup")
+		labels = append(labels, "Validate")
 		actions = append(actions, wrap(func() error { _, _, e := runValidate(); return e }))
 
-		labels = append(labels, "System  →  update / reboot")
+		labels = append(labels, "System")
 		actions = append(actions, wrapSub(systemMenu))
 
-		labels = append(labels, "Network  →  ports / firewall whitelist")
+		labels = append(labels, "Network")
 		actions = append(actions, wrapSub(networkMenu(admin)))
 
 		if admin {
-			labels = append(labels, "Modules  →  re-run any module")
+			labels = append(labels, "Modules")
 			actions = append(actions, wrapSub(modulesMenu))
 
-			labels = append(labels, "Check & Fix  →  re-run modules whose checks failed")
+			labels = append(labels, "Check & Fix")
 			actions = append(actions, wrap(runCheckAndFix))
 
-			labels = append(labels, "Setup wizard (overwrites config)")
+			labels = append(labels, "Setup wizard")
 			actions = append(actions, wrap(runWizard))
 		}
 
@@ -172,8 +172,8 @@ func wrapSub(fn func() error) func() (bool, error) {
 func statusMenu() error {
 	for {
 		idx := prompt.ChooseEx("Status", []string{
-			"Snapshot (one-shot)",
-			"Live (refresh every 2s, Ctrl+C to exit)",
+			"Snapshot",
+			"Live",
 		}, true, false)
 		switch idx {
 		case prompt.ChoiceBack:
@@ -201,8 +201,8 @@ func statusMenu() error {
 func systemMenu() error {
 	for {
 		idx := prompt.ChooseEx("System", []string{
-			"Run system update (apt update + upgrade + autoremove)",
-			"Reboot server (now / schedule / cancel)",
+			"Update",
+			"Reboot",
 		}, true, false)
 		switch idx {
 		case prompt.ChoiceBack:
@@ -229,17 +229,17 @@ func systemMenu() error {
 func networkMenu(admin bool) func() error {
 	return func() error {
 		for {
-			labels := []string{"List managed ports + UFW sources"}
+			labels := []string{"List ports"}
 			actions := []func() error{showOverview}
 
 			if admin {
 				labels = append(labels,
-					"Add port (open + register)",
-					"Remove port (close + unregister)",
-					"Allow IP on a specific port",
-					"Revoke IP from a specific port",
-					"Allow IP on ALL managed ports (shortcut)",
-					"Revoke IP from ALL managed ports (shortcut)",
+					"Add port",
+					"Remove port",
+					"Allow IP on port",
+					"Revoke IP from port",
+					"Allow IP on all ports",
+					"Revoke IP from all ports",
 				)
 				actions = append(actions,
 					interactivePortAdd,
@@ -269,15 +269,15 @@ func networkMenu(admin bool) func() error {
 func modulesMenu() error {
 	for {
 		idx := prompt.ChooseEx("Modules", []string{
-			"firewall  (UFW bootstrap)",
-			"ssh       (hardening + open port)",
-			"docker    (install + rootless)",
-			"fail2ban  (anti brute-force SSH)",
-			"upgrades  (unattended security patches)",
-			"timesync  (systemd-timesyncd + timezone)",
-			"sysctl    (kernel hardening + tuning)",
-			"hostname  (set hostname + /etc/hosts)",
-			"all       (run everything in order)",
+			"firewall",
+			"ssh",
+			"docker",
+			"fail2ban",
+			"upgrades",
+			"timesync",
+			"sysctl",
+			"hostname",
+			"all",
 		}, true, false)
 		if idx == prompt.ChoiceBack {
 			return nil
