@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
+	"unicode/utf8"
 
 	"lsm/internal/config"
 	"lsm/internal/prompt"
@@ -141,16 +143,16 @@ func runBootstrap() error {
 }
 
 func printHeader(admin bool) {
-	fmt.Println()
-	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║  lsm — menu                               ║")
-	fmt.Printf("║  config: %-33s║\n", cfgFile)
 	role := "operator (sudo)"
 	if admin {
 		role = "admin (root)"
 	}
-	fmt.Printf("║  role:   %-33s║\n", role)
-	fmt.Println("╚═══════════════════════════════════════════╝")
+	line := fmt.Sprintf("lsm  ·  config: %s  ·  role: %s", cfgFile, role)
+	border := strings.Repeat("─", utf8.RuneCountInString(line)+2)
+	fmt.Println()
+	fmt.Println("┌" + border + "┐")
+	fmt.Println("│ " + line + " │")
+	fmt.Println("└" + border + "┘")
 }
 
 // wrap turns a plain action into one that signals "did run, please pause".
