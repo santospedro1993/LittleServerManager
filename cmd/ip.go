@@ -16,7 +16,7 @@ var addIPCmd = &cobra.Command{
 	Short: "Allow IP/CIDR for all managed ports in UFW",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		var ip string
@@ -38,7 +38,7 @@ var removeIPCmd = &cobra.Command{
 	Short: "Revoke IP/CIDR from managed ports in UFW",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		var ip string

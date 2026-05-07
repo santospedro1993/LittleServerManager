@@ -11,7 +11,7 @@ var sysctlCmd = &cobra.Command{
 	Use:   "sysctl",
 	Short: "Apply kernel hardening + tuning (writes /etc/sysctl.d/99-lsm.conf)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		runner.Section("sysctl: write " + sysctl.ConfPath + " + apply")

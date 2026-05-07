@@ -23,6 +23,9 @@ var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Setup wizard: prompts for values and writes config file",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := RequireAdmin(); err != nil {
+			return err
+		}
 		return runWizard()
 	},
 }

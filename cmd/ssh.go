@@ -17,7 +17,7 @@ var sshCmd = &cobra.Command{
 	Use:   "ssh",
 	Short: "SSH hardening: create user, change port, disable root, open UFW",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		if !ufw.Installed() {

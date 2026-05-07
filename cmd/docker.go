@@ -14,7 +14,7 @@ var dockerCmd = &cobra.Command{
 	Use:   "docker",
 	Short: "Install Docker + setup rootless user",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		cfg, err := config.Load(cfgFile)

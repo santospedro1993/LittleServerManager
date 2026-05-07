@@ -13,7 +13,7 @@ var fail2banCmd = &cobra.Command{
 	Use:   "fail2ban",
 	Short: "Install fail2ban + tune sshd jail using SSH port from config",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		cfg, err := config.Load(cfgFile)

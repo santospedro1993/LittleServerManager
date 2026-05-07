@@ -11,7 +11,7 @@ var upgradesCmd = &cobra.Command{
 	Use:   "upgrades",
 	Short: "Install + enable unattended-upgrades (auto security patches)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		runner.Section("unattended-upgrades: install + enable periodic")

@@ -14,7 +14,7 @@ var hostnameCmd = &cobra.Command{
 	Use:   "hostname",
 	Short: "Set system hostname + update /etc/hosts (uses config.hostname/fqdn)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		cfg, err := config.Load(cfgFile)

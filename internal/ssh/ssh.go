@@ -14,9 +14,14 @@ func UserExists(name string) bool {
 	return err == nil
 }
 
-// CreateUser creates name with the given password (only if user doesn't exist),
-// then ensures sudo membership. Password is consumed once and never persisted
-// by lsm — caller is responsible for zeroing/discarding it after the call.
+// CreateUser creates name with the given password (only if user doesn't exist).
+// The user is intentionally NOT added to the sudo group — full root access via
+// sudo is reserved for explicit root login. Operator-class lsm commands are
+// granted via a narrow /etc/sudoers.d/lsm drop-in (see GrantPasswordlessLSM).
+//
+// If the user was previously in the sudo group (from older lsm versions or
+// manual setup), this function removes the membership so the security model
+// stays consistent. Password is consumed once and never persisted by lsm.
 func CreateUser(name, password string) error {
 	if UserExists(name) {
 		runner.Log("User '%s' já existe — password mantida.", name)
@@ -32,7 +37,10 @@ func CreateUser(name, password string) error {
 		}
 		runner.Log("User '%s' criado.", name)
 	}
-	return runner.Run("usermod", "-aG", "sudo", name)
+	// Garante que o user NÃO está no grupo sudo (modelo: operator-only).
+	// `gpasswd -d` falha se já não for membro — ignoramos via TryRun.
+	runner.TryRun("gpasswd", "-d", name, "sudo")
+	return nil
 }
 
 func Harden(port int) error {
@@ -56,14 +64,25 @@ func Harden(port int) error {
 }
 
 // GrantPasswordlessLSM writes /etc/sudoers.d/lsm so the given user can run
-// /usr/sbin/lsm via sudo without being prompted for a password. The file is
-// validated with `visudo -cf` before being moved into place — a malformed
-// drop-in would break sudo for everyone, so we never install it untested.
+// a narrow allowlist of operator-class lsm subcommands via sudo without a
+// password. Destructive operations (init, ssh, docker, fail2ban, upgrades,
+// sysctl, hostname, firewall, add-ip, remove-ip, all) are NOT granted —
+// those require real root login and are gated in-app by RequireAdmin.
+//
+// The file is validated with `visudo -cf` before being moved into place —
+// a malformed drop-in would break sudo for everyone, so we never install
+// it untested.
 func GrantPasswordlessLSM(name string) error {
 	const final = "/etc/sudoers.d/lsm"
 	const tmp = "/etc/sudoers.d/.lsm.tmp"
 
-	body := fmt.Sprintf("# Managed by lsm — do not edit by hand.\n%s ALL=(root) NOPASSWD: /usr/sbin/lsm\n", name)
+	body := fmt.Sprintf(`# Managed by lsm — do not edit by hand.
+# Operator-class lsm subcommands granted to %[1]s with NOPASSWD.
+# Anything not listed below requires real root login (no sudo path).
+%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm validate
+%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm update-server
+%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm timesync status
+`, name)
 
 	if err := os.WriteFile(tmp, []byte(body), 0440); err != nil {
 		return fmt.Errorf("escrever sudoers tmp: %w", err)
@@ -75,7 +94,7 @@ func GrantPasswordlessLSM(name string) error {
 	if err := os.Rename(tmp, final); err != nil {
 		return fmt.Errorf("mover sudoers para %s: %w", final, err)
 	}
-	runner.Log("sudo NOPASSWD configurado: %s pode correr 'sudo lsm' sem password.", name)
+	runner.Log("sudo NOPASSWD restrito configurado para '%s' (validate / update-server / timesync status).", name)
 	return nil
 }
 

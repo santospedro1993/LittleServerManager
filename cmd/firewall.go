@@ -11,7 +11,7 @@ var firewallCmd = &cobra.Command{
 	Use:   "firewall",
 	Short: "Bootstrap UFW (idempotent): install, defaults, port 22, enable",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := runner.RequireRoot(); err != nil {
+		if err := RequireAdmin(); err != nil {
 			return err
 		}
 		runner.Section("UFW: bootstrap idempotente")

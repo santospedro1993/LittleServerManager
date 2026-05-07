@@ -209,7 +209,7 @@ Padrão obrigatório (segue ssh.go ou fail2ban.go como template):
 | 2 | `timesync` | `set-timezone` + `set-ntp true` + enable timesyncd | `timezone` |
 | 3 | `sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` + `sysctl --system` | — (hardcoded) |
 | 4 | `hostname` | `hostnamectl` + atualiza `/etc/hosts` | `hostname`, `fqdn` (skip se vazio) |
-| 5 | `ssh` | Cria user (pede password em runtime se ainda não existe), grava `/etc/sudoers.d/lsm` (NOPASSWD para `/usr/sbin/lsm`), hardening sshd, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
+| 5 | `ssh` | Cria user **fora do grupo sudo** (operator-only), grava `/etc/sudoers.d/lsm` com NOPASSWD restrito (`validate` / `update-server` / `timesync status`), hardening sshd, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
 | 6 | `docker` | Remove conflitos, install Docker CE, rootless setup user dedicado | `docker.rootless_user` |
 | 7 | `fail2ban` | Install, escreve `jail.local` (port=ssh.port, ignoreip = `ufw.SpecificSources` da porta SSH) | `ssh.port` |
 | 8 | `upgrades` | Install + escreve `20auto-upgrades` + enable service | — |
@@ -249,6 +249,26 @@ Flags globais:
 - `--version`
 
 ---
+
+## 10b. Modelo de permissões (admin vs operator)
+
+Dois papéis. Decididos em runtime, não persistidos.
+
+- **admin** = real root login. Detetado por `uid==0 && $SUDO_USER == ""`.
+  Caminho típico: cloud console / IPMI / `su -` com password do root.
+  Pode tudo (init, ssh, docker, firewall, add-ip, remove-ip, all, ...).
+- **operator** = `sudo lsm` invocado de user não-root (ex: dev24).
+  `$SUDO_USER` está definido. Só pode: `validate`, `update-server`,
+  `timesync status`, `ver overview`. Tudo o resto é rejeitado por
+  `RequireAdmin()` em `cmd/root.go`.
+
+`RequireAdmin()` está aplicado em: firewall, ssh, docker, fail2ban,
+upgrades, sysctl, hostname, init, add-ip, remove-ip. Operator-class
+cmds usam só `runner.RequireRoot()`.
+
+dev24 (ou seja qual for `ssh.user`) **NÃO** está no grupo sudo. Único
+caminho de privilégio é via lsm sudoers drop-in scoped aos subcmds
+operator. Para destructive: precisa-se de root login de outra via.
 
 ## 11. Semântica da whitelist de IPs
 

@@ -11,8 +11,15 @@ import (
 )
 
 // runMenu drives the interactive flow when lsm is invoked with no subcommand.
+// Menu options are filtered by the caller's role: admin (real root login)
+// sees everything; operator (sudo from non-root) sees only safe actions.
 func runMenu() error {
+	admin := RequireAdmin() == nil
+
 	if !config.Exists(cfgFile) {
+		if !admin {
+			return fmt.Errorf("config não existe em %s — setup inicial requer login direto como root", cfgFile)
+		}
 		fmt.Println("Nenhuma config encontrada em", cfgFile)
 		fmt.Println("→ A iniciar Setup Inicial.")
 		fmt.Println()
@@ -30,47 +37,55 @@ func runMenu() error {
 		fmt.Println("╔═══════════════════════════════════════════╗")
 		fmt.Println("║  lsm — menu                               ║")
 		fmt.Printf("║  config: %-33s║\n", cfgFile)
+		role := "operator (sudo)"
+		if admin {
+			role = "admin (root)"
+		}
+		fmt.Printf("║  role:   %-33s║\n", role)
 		fmt.Println("╚═══════════════════════════════════════════╝")
-		idx := prompt.Choose("Que ação?", []string{
-			"Validar setup",
-			"Correr módulo (firewall / ssh / docker / all)",
-			"Atualizar servidor (apt update + upgrade + autoremove)",
-			"Adicionar IP à whitelist",
-			"Remover IP da whitelist",
-			"Ver IPs / portas geridas",
-			"Re-correr Setup Inicial (sobrescreve config)",
-			"Sair",
-		})
-		if idx == 8 {
+
+		var options []string
+		var actions []func() error
+		options = append(options, "Validar setup")
+		actions = append(actions, runValidate)
+		options = append(options, "Atualizar servidor (apt update + upgrade + autoremove)")
+		actions = append(actions, runUpdateServer)
+		options = append(options, "Ver IPs / portas geridas")
+		actions = append(actions, showOverview)
+
+		if admin {
+			options = append(options, "Correr módulo (firewall / ssh / docker / all)")
+			actions = append(actions, chooseAndRunModule)
+			options = append(options, "Adicionar IP à whitelist")
+			actions = append(actions, func() error {
+				ip := prompt.AskIPOrCIDR("IP/CIDR a adicionar")
+				if ip == "" {
+					return nil
+				}
+				return addIP(ip)
+			})
+			options = append(options, "Remover IP da whitelist")
+			actions = append(actions, interactiveRemoveIP)
+			options = append(options, "Re-correr Setup Inicial (sobrescreve config)")
+			actions = append(actions, runWizard)
+		}
+		options = append(options, "Sair")
+
+		idx := prompt.Choose("Que ação?", options)
+		if idx == len(options) {
 			return nil
 		}
 
 		fmt.Println()
 		fmt.Println("─── output ─────────────────────────────────")
-		var err error
-		switch idx {
-		case 1:
-			err = runValidate()
-		case 2:
-			err = chooseAndRunModule()
-		case 3:
-			err = runUpdateServer()
-		case 4:
-			ip := prompt.AskIPOrCIDR("IP/CIDR a adicionar")
-			if ip != "" {
-				err = addIP(ip)
-			}
-		case 5:
-			err = interactiveRemoveIP()
-		case 6:
-			err = showOverview()
-		case 7:
-			err = runWizard()
-		}
+		err := actions[idx-1]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "erro:", err)
 		}
 		fmt.Println("────────────────────────────────────────────")
+		if !admin {
+			fmt.Println("(operações destrutivas requerem login direto como root)")
+		}
 		prompt.Pause("")
 	}
 }

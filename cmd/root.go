@@ -51,6 +51,22 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "auto-confirm prompts")
 }
 
+// RequireAdmin gates destructive operations. Admin = real root login
+// (uid 0 AND $SUDO_USER unset). `sudo lsm <destructive>` from a non-root
+// user is rejected — those flows must be invoked from a root shell
+// (console / IPMI / `su -` with root password). Operator-class commands
+// (validate, update-server, timesync status, overview) bypass this and
+// only need RequireRoot.
+func RequireAdmin() error {
+	if err := runner.RequireRoot(); err != nil {
+		return err
+	}
+	if su := os.Getenv("SUDO_USER"); su != "" {
+		return fmt.Errorf("operação requer login direto como root (não via sudo). SUDO_USER=%s. Usa o console / IPMI ou `su -` com password do root.", su)
+	}
+	return nil
+}
+
 // markInstalled records a successful module run in state.yaml.
 // Best-effort: load failures are non-fatal (state is observability, not a critical path).
 func markInstalled(name string) {
