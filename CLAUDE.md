@@ -406,7 +406,8 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 
 | Path | Conteúdo | Gerido por |
 |---|---|---|
-| `/usr/sbin/lsm` | binário | dpkg |
+| `/usr/sbin/lsm` | binário real | dpkg |
+| `/usr/local/bin/lsm` | wrapper `exec sudo /usr/sbin/lsm "$@"` (`/usr/sbin` não está no PATH default de users não-root) | lsm `PersistentPreRunE` (idempotente) |
 | `/etc/lsm/config.yaml` | source of truth | user / wizard |
 | `/etc/lsm/config.example.yaml` | template do schema | dpkg (atualizado em upgrades) |
 | `/etc/lsm/state.yaml` | portas geridas | lsm (read/write) |

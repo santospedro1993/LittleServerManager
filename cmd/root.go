@@ -26,6 +26,12 @@ Docker rootless, fail2ban, unattended-upgrades, timesync, sysctl, hostname.
 Run without args for the interactive menu.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		runner.DryRun = dryRun
+		// Best-effort: ensure /usr/local/bin/lsm wrapper exists so that
+		// non-root users can type plain `lsm` without /usr/sbin in PATH.
+		// Errors are non-fatal (we may not even be running as root yet).
+		if os.Geteuid() == 0 {
+			ensureShellWrapper()
+		}
 		return nil
 	},
 	// No subcommand → interactive menu.
@@ -68,6 +74,29 @@ func RequireAdmin() error {
 		return nil
 	}
 	return fmt.Errorf("this operation requires direct root login (not via sudo). SUDO_USER=%s. Use the console / IPMI or `su -` with the root password", su)
+}
+
+// ensureShellWrapper drops /usr/local/bin/lsm — a tiny shell wrapper that
+// re-execs the real binary via sudo. Reasoning: the real binary lives in
+// /usr/sbin/lsm (Debian convention for root-only tools), but `/usr/sbin`
+// is NOT in a non-root user's default PATH. Without this wrapper, a user
+// like dev24 typing plain `lsm` after a reboot gets "command not found".
+//
+// The wrapper is in /usr/local/bin which IS in every user's default PATH.
+// It calls `sudo /usr/sbin/lsm "$@"` — the sudoers drop-in (see
+// internal/ssh.GrantPasswordlessLSM) makes that pass without a prompt for
+// the configured ssh user. For root invocations it's a no-op (sudo
+// from root doesn't prompt either way).
+//
+// Best-effort + idempotent: writes only if the file is missing or content
+// drifted; errors are swallowed (logged at debug only).
+func ensureShellWrapper() {
+	const path = "/usr/local/bin/lsm"
+	want := "#!/bin/sh\n# Managed by lsm — resolves `lsm` from non-root PATHs.\nexec sudo /usr/sbin/lsm \"$@\"\n"
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == want {
+		return
+	}
+	_ = os.WriteFile(path, []byte(want), 0755)
 }
 
 // markInstalled records a successful module run in state.yaml.
