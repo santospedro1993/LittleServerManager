@@ -1,0 +1,43 @@
+# --- Build artifacts ---
+/lsm
+/lsm-*
+/lsm_*
+*.deb
+dist/
+build/
+
+# --- Go ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+vendor/
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs / runtime ---
+*.log
+/tmp/
+
+# --- Local config (never commit real secrets) ---
+config.yaml
+state.yaml
+*.local.yaml
+.env
+.env.*
+!.env.example

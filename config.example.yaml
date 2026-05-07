@@ -1,0 +1,16 @@
+timezone: Europe/Lisbon
+
+ssh:
+  port: 2210
+  user: dev24
+  password: ALTERA-ME-123
+
+docker:
+  rootless_user: docker24
+
+network:
+  # Lista vazia → portas abrem a TODOS (sem restrição de origem)
+  # Populada → módulos abrem porta só para estes IPs/CIDRs
+  allowed_ips: []
+  # Política para abrir portas em UFW: true | false | ask
+  auto_open_ports: ask

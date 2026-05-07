@@ -1,0 +1,77 @@
+package runner
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+var DryRun bool
+
+func ts() string { return time.Now().Format("15:04:05") }
+
+func Log(format string, args ...any) {
+	fmt.Printf("[%s] %s\n", ts(), fmt.Sprintf(format, args...))
+}
+
+func Section(name string) {
+	fmt.Println()
+	fmt.Println("=== " + name + " ===")
+}
+
+func RequireRoot() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("must run as root (use sudo)")
+	}
+	return nil
+}
+
+func HasCommand(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// Run executes cmd, streaming stdout/stderr.
+func Run(name string, args ...string) error {
+	line := name + " " + strings.Join(args, " ")
+	if DryRun {
+		Log("DRY: %s", line)
+		return nil
+	}
+	Log("RUN: %s", line)
+	c := exec.Command(name, args...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+// Capture executes cmd, returning combined output. Errors swallowed by caller if needed.
+func Capture(name string, args ...string) (string, error) {
+	if DryRun {
+		Log("DRY-CAPTURE: %s %s", name, strings.Join(args, " "))
+		return "", nil
+	}
+	out, err := exec.Command(name, args...).CombinedOutput()
+	return string(out), err
+}
+
+// Stdin executes cmd, piping `in` to stdin.
+func Stdin(in, name string, args ...string) error {
+	if DryRun {
+		Log("DRY: %s %s (stdin %d bytes)", name, strings.Join(args, " "), len(in))
+		return nil
+	}
+	Log("RUN: %s %s", name, strings.Join(args, " "))
+	c := exec.Command(name, args...)
+	c.Stdin = strings.NewReader(in)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+// TryRun runs cmd but ignores errors (e.g. "remove pkg that may not exist").
+func TryRun(name string, args ...string) {
+	_ = Run(name, args...)
+}

@@ -1,0 +1,232 @@
+name: Release (.deb)
+
+# Trigger manual via Actions tab. Pede versão + branch.
+# Cria tag v<version>, faz build do binário (amd64 + arm64),
+# empacota em .deb e publica como GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão (sem prefixo "v"). Ex: 0.1.0'
+        required: true
+        type: string
+      branch:
+        description: 'Branch base'
+        required: true
+        default: 'main'
+        type: string
+
+permissions:
+  contents: write   # criar tag + release
+
+jobs:
+  build:
+    name: Build .deb (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout (${{ inputs.branch }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build binary (linux/${{ matrix.arch }})
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ inputs.version }}" \
+            -o lsm .
+          file lsm
+          ls -lh lsm
+
+      - name: Build .deb
+        env:
+          VERSION: ${{ inputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          PKG="lsm_${VERSION}_${ARCH}"
+          mkdir -p "$PKG/DEBIAN" \
+                   "$PKG/usr/sbin" \
+                   "$PKG/etc/lsm" \
+                   "$PKG/usr/share/doc/lsm"
+
+          # binário
+          install -m 755 lsm "$PKG/usr/sbin/lsm"
+
+          # config exemplo (NÃO sobrescreve config.yaml em re-installs)
+          install -m 644 config.example.yaml "$PKG/etc/lsm/config.example.yaml"
+
+          # docs
+          install -m 644 README.md "$PKG/usr/share/doc/lsm/README.md"
+
+          # control
+          cat > "$PKG/DEBIAN/control" <<EOF
+          Package: lsm
+          Version: ${VERSION}
+          Section: admin
+          Priority: optional
+          Architecture: ${ARCH}
+          Maintainer: lsm maintainers <noreply@example.com>
+          Depends: systemd
+          Recommends: ca-certificates, curl
+          Description: Linux Server Manager — Debian server provisioning
+           lsm provisiona servidores Debian de forma idempotente:
+           UFW, SSH hardening, Docker rootless, fail2ban, unattended-upgrades,
+           systemd-timesyncd, sysctl, hostname.
+           Corre 'sudo lsm' para o menu interativo ou usa subcomandos
+           (validate, add-ip, remove-ip, ...).
+          EOF
+
+          # postinst — distingue install fresco vs upgrade
+          cat > "$PKG/DEBIAN/postinst" <<'POST'
+          #!/bin/bash
+          set -e
+
+          ACTION="${1:-configure}"
+          OLD_VERSION="${2:-}"
+
+          mkdir -p /etc/lsm
+          chmod 755 /etc/lsm
+
+          # Os ficheiros do package (binário, config.example.yaml, README) já foram
+          # copiados pelo dpkg neste ponto. config.yaml e state.yaml não são
+          # geridos pelo package → preservados em upgrades.
+
+          echo
+          echo "============================================"
+          if [ -n "$OLD_VERSION" ]; then
+            echo "  lsm atualizado: ${OLD_VERSION} → __VERSION__"
+          else
+            echo "  lsm instalado (versão __VERSION__)"
+          fi
+          echo "============================================"
+          echo "  Binário:    /usr/sbin/lsm"
+          echo "  Config:     /etc/lsm/config.yaml          (preservado em upgrades)"
+          echo "  Exemplo:    /etc/lsm/config.example.yaml  (atualizado p/ esta versão)"
+          echo "  State:      /etc/lsm/state.yaml           (gerido pelo lsm)"
+          echo "  Docs:       /usr/share/doc/lsm/README.md"
+          echo
+
+          if [ -n "$OLD_VERSION" ]; then
+            if [ -f /etc/lsm/config.yaml ]; then
+              echo "  Para ver mudanças no schema desde a versão antiga:"
+              echo "    diff /etc/lsm/config.yaml /etc/lsm/config.example.yaml"
+              echo
+              echo "  Validar setup atual:"
+              echo "    sudo lsm validate"
+            fi
+          else
+            echo "  Próximo passo:"
+            echo "    sudo lsm   (sem config → wizard arranca automaticamente)"
+          fi
+          echo
+          POST
+
+          # Substitui placeholder __VERSION__ pela versão real
+          sed -i "s/__VERSION__/${VERSION}/g" "$PKG/DEBIAN/postinst"
+          chmod 755 "$PKG/DEBIAN/postinst"
+
+          # prerm — limpeza opcional ao remover (não toca em config)
+          cat > "$PKG/DEBIAN/prerm" <<'PRERM'
+          #!/bin/bash
+          set -e
+          # Não removemos /etc/lsm/* — config + state ficam.
+          # Para purga total: sudo apt purge lsm && sudo rm -rf /etc/lsm
+          PRERM
+          chmod 755 "$PKG/DEBIAN/prerm"
+
+          dpkg-deb --build --root-owner-group "$PKG"
+          ls -lh "${PKG}.deb"
+
+          # alias versionless → permite URL "releases/latest/download/lsm_<arch>.deb"
+          cp "${PKG}.deb" "lsm_${ARCH}.deb"
+          ls -lh "lsm_${ARCH}.deb"
+
+          # validar
+          dpkg-deb --info "${PKG}.deb"
+          dpkg-deb --contents "${PKG}.deb"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: |
+            lsm_${{ inputs.version }}_${{ matrix.arch }}.deb
+            lsm_${{ matrix.arch }}.deb
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (${{ inputs.branch }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0   # tags + history para release notes
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh artifacts/
+
+      - name: Create tag + release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          target_commitish: ${{ inputs.branch }}
+          name: v${{ inputs.version }}
+          generate_release_notes: true
+          files: artifacts/*.deb
+          fail_on_unmatched_files: true
+          body: |
+            ## Install (latest)
+
+            ```bash
+            ARCH=$(dpkg --print-architecture)
+            wget https://github.com/${{ github.repository }}/releases/latest/download/lsm_${ARCH}.deb
+            sudo apt install -y ./lsm_${ARCH}.deb
+            sudo lsm
+            ```
+
+            ## Install (esta versão específica)
+
+            ```bash
+            # amd64
+            wget https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/lsm_${{ inputs.version }}_amd64.deb
+            sudo apt install -y ./lsm_${{ inputs.version }}_amd64.deb
+
+            # arm64
+            wget https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/lsm_${{ inputs.version }}_arm64.deb
+            sudo apt install -y ./lsm_${{ inputs.version }}_arm64.deb
+            ```
+
+            ## Upgrade
+
+            Mesmo comando de install. `config.yaml` + `state.yaml` preservados.
+            `config.example.yaml` é atualizado para refletir o schema desta versão.
+
+            ## Locations
+
+            - Binário: `/usr/sbin/lsm`
+            - Config:  `/etc/lsm/config.yaml`
+            - State:   `/etc/lsm/state.yaml`
