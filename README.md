@@ -92,12 +92,25 @@ GOOS=linux GOARCH=amd64 go build -o lsm .
 sudo lsm
 ```
 
-Se não houver `/etc/lsm/config.yaml`:
-1. Wizard interativo arranca → pergunta valores (timezone, hostname, SSH user/port/password, docker user, IPs whitelist, política).
-2. No fim, podes correr `firewall + ssh + docker + fail2ban + ...` de uma só vez.
+**Primeiro arranque** (sem `/etc/lsm/config.yaml`):
+1. **Apt update + upgrade** automático antes de tocar em config (kernel/security
+   patches primeiro). Se for preciso reboot, lsm pergunta e sai — re-corres
+   depois e retoma daqui.
+2. **Wizard** pergunta valores: timezone (default `Etc/UTC`), hostname, SSH
+   user/port, docker rootless user, política `auto_open_ports`. Modules
+   baseline (firewall, ssh, sysctl, timesync, hostname, fail2ban, upgrades)
+   são sempre instalados; **só docker é opt-in**.
+3. **Passwords** dos users SSH e docker rootless são pedidas em runtime
+   (`stty -echo` + double-prompt). Não ficam em ficheiro.
+4. Corre módulos selecionados.
+5. Pergunta se quer **auto-launch** do menu no login do SSH user (escreve
+   bloco em `~/.profile`).
 
-Se já existir config:
-- Menu mostra: **Validar setup**, **Correr módulo**, **Adicionar IP**, **Remover IP**, **Ver overview**, **Re-init**, **Sair**.
+**Run subsequente** (config existe):
+- Menu top-level: **Status / Validate / System / Network / Modules / Setup wizard / x**.
+- Submenus navegam com número, `x` recua/sai.
+- dev24 (operator) só vê: Status / Validate (read-only) / System (update + reboot) / Network (list).
+- root (admin) vê tudo.
 
 ---
 
@@ -170,10 +183,15 @@ sudo rm -rf /etc/lsm       # remoção total da config + state
 
 | O quê | Onde | Notas |
 |---|---|---|
-| Binário | `/usr/sbin/lsm` | Em PATH para sudo (Debian convention) |
+| Binário real | `/usr/sbin/lsm` | Convenção Debian para tools que precisam de root |
+| Wrapper PATH | `/usr/local/bin/lsm` | `exec sudo /usr/sbin/lsm "$@"` — `lsm` plain funciona p/ user não-root |
 | Config | `/etc/lsm/config.yaml` | **Edita aqui**. Source of truth |
 | Exemplo | `/etc/lsm/config.example.yaml` | Template, copia/edita |
-| State | `/etc/lsm/state.yaml` | Gerido pelo lsm; portas abertas tracked |
+| State | `/etc/lsm/state.yaml` | Gerido pelo lsm; portas geridas + módulos instalados |
+| sshd drop-in | `/etc/ssh/sshd_config.d/99-lsm.conf` | Port + PermitRootLogin no + PasswordAuthentication yes |
+| Sudoers | `/etc/sudoers.d/lsm` | NOPASSWD blanket em `/usr/sbin/lsm` para SSH user (gate em-app) |
+| needrestart | `/etc/needrestart/conf.d/99-lsm.conf` | Modo list-only (sem dialog interativo no apt) |
+| Auto-launch | `~/.profile` (SSH user) | Bloco marcado: corre `sudo lsm` no login interativo |
 | Docs | `/usr/share/doc/lsm/README.md` | Este ficheiro |
 
 Override do path da config: `sudo lsm --config /caminho/outro.yaml`
@@ -182,30 +200,38 @@ Override do path da config: `sudo lsm --config /caminho/outro.yaml`
 
 ## Configuração
 
-`/etc/lsm/config.yaml`:
+`/etc/lsm/config.yaml` representa **intenção** — sem segredos, sem dados
+derivados (whitelist de IPs vem do estado real do UFW; passwords são pedidas
+em runtime).
 
 ```yaml
 timezone: Etc/UTC
-hostname: srv01            # vazio → módulo hostname não corre
-fqdn: srv01.exemplo.com    # opcional
+hostname: srv01                  # vazio → módulo hostname não corre
+fqdn: srv01.example.com          # opcional
 
 ssh:
-  port: 2210
-  user: dev24
-  password: ALTERA-ME-123
+  port: 2210                     # alternativa à 22 reduz brute-force
+  user: dev24                    # password pedida ao criar user
 
 docker:
-  rootless_user: docker24
+  rootless_user: docker24        # password pedida ao criar user
 
 network:
-  # Vazia → portas abrem a TODOS (sem restrição de origem)
-  # Populada → módulos abrem porta SÓ para estes IPs/CIDRs
-  allowed_ips:
-    - 10.0.0.5
-    - 192.168.1.0/24
-
-  # true | false | ask  — controla quando módulos abrem portas em UFW
+  # Política para módulos que precisam de abrir portas em UFW:
+  #   ask   → pergunta caso a caso (recomendado)
+  #   true  → abre automaticamente
+  #   false → nunca abre (gestão manual)
   auto_open_ports: ask
+
+modules:
+  firewall: true   # baseline (sempre)
+  ssh: true        # baseline (sempre)
+  sysctl: true     # baseline
+  timesync: true   # baseline
+  hostname: true   # baseline (skip se hostname vazio)
+  fail2ban: true   # baseline
+  upgrades: true   # baseline
+  docker: true     # opt-in via wizard
 ```
 
 ---
@@ -216,27 +242,47 @@ network:
 
 | Comando | Descrição |
 |---|---|
-| `lsm` | Menu interativo (sem args) |
-| `lsm init` | Wizard que cria config |
+| `lsm` | Menu interativo |
+| `lsm init` | Wizard de config |
 | `lsm validate` | Audita sistema vs config (read-only) |
-| `lsm all` | Corre todos os módulos por ordem |
-| `lsm add-ip [IP]` | Adiciona IP/CIDR à whitelist + sincroniza UFW |
-| `lsm remove-ip [IP]` | Remove IP/CIDR + sincroniza UFW |
+| `lsm all` | Corre módulos selecionados em `config.modules.*` |
+| `lsm status [--live]` | CPU / RAM / disk / network. `--live` faz refresh 2s |
+| `lsm system update` | apt update + upgrade + autoremove (sem restart inline; pergunta reboot) |
+| `lsm system reboot` | Reboot agora / agendar 04:00 / adiar |
+| `lsm port add P/PROTO [LABEL]` | Registar + abrir porta (`--restrict` para abrir fechada) |
+| `lsm port remove P/PROTO` | Fechar + remover de state |
+| `lsm port allow P/PROTO IP` | ALLOW from IP só nessa porta |
+| `lsm port revoke P/PROTO IP` | DELETE allow from IP só nessa porta |
+| `lsm port list` | Tabela: portas geridas + sources UFW |
+| `lsm add-ip [IP]` | Atalho: ALLOW from IP em **todas** portas geridas |
+| `lsm remove-ip [IP]` | Atalho: DELETE em todas portas geridas |
 
 ### Módulos
 
 | Comando | Descrição |
 |---|---|
-| `lsm firewall` | UFW: install, defaults deny/allow, abre porta 22 (bootstrap) |
-| `lsm ssh` | Cria user, muda porta sshd, desliga root login, abre porta em UFW |
-| `lsm docker` | Remove conflitos, instala Docker, configura rootless num user dedicado |
-| `lsm fail2ban` | Instala + jail.local com `port=SSH_PORT` + ignoreip=allowed_ips |
-| `lsm upgrades` | Instala unattended-upgrades + ativa periodic |
-| `lsm timesync` | Configura systemd-timesyncd + timezone |
-| `lsm timesync sync` | Força re-sync NTP imediato |
-| `lsm timesync status` | Mostra `timedatectl status` |
-| `lsm sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` (hardening + tuning) + aplica |
-| `lsm hostname` | `hostnamectl set-hostname` + atualiza `/etc/hosts` |
+| `lsm firewall` | UFW: install, defaults deny/allow, abre 22 (bootstrap só na 1ª vez) |
+| `lsm ssh` | Cria user (pede password), drop-in `sshd_config.d/99-lsm.conf`, abre porta UFW |
+| `lsm docker` | Instala Docker CE, dependências rootless (slirp4netns, fuse-overlayfs, systemd-container), cria user (pede password), `dockerd-rootless-setuptool.sh install` |
+| `lsm fail2ban` | jail.local com `port=ssh.port` + ignoreip lido do UFW |
+| `lsm upgrades` | unattended-upgrades + periodic config |
+| `lsm timesync` | systemd-timesyncd + timezone |
+| `lsm timesync sync` | Força re-sync NTP |
+| `lsm timesync status` | `timedatectl status` |
+| `lsm sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` |
+| `lsm hostname` | `hostnamectl set-hostname` + `/etc/hosts` |
+
+### Modelo de permissões
+
+| Role | Como detectado | Pode |
+|---|---|---|
+| **admin** | uid 0 + (`$SUDO_USER` vazio ou `root`) | tudo |
+| **operator** | uid 0 + `$SUDO_USER` é user não-root (ex: dev24) | só read-only + system update/reboot |
+
+Operator é tipicamente o SSH user (default `dev24`) que **não** está no grupo
+`sudo`. Privilégio vem só da entrada NOPASSWD em `/etc/sudoers.d/lsm`; lsm
+filtra por subcmd em-app. Operações destrutivas precisam de root login
+(console / IPMI / `su -`).
 
 ### Flags globais
 
@@ -258,14 +304,17 @@ network:
 - **Idempotente**: re-correr não duplica regras.
 
 ### ssh
-- Cria user (config `ssh.user` + `ssh.password`), adiciona ao grupo sudo.
-- Edita `/etc/ssh/sshd_config`:
+- Cria user (`ssh.user`) + pede password em runtime se ainda não existir.
+- **Não** adiciona ao grupo sudo (modelo operator-only).
+- Drop-in `/etc/ssh/sshd_config.d/99-lsm.conf`:
   - `Port` = `ssh.port`
   - `PermitRootLogin no`
   - `PasswordAuthentication yes` (até teres ssh-keys)
-- Restart sshd.
-- Abre nova porta em UFW (respeita `auto_open_ports` + whitelist).
-- Regista a porta em `state.yaml` para sincronização futura.
+- Valida com `sshd -t` antes de `systemctl reload-or-restart ssh`.
+- Abre nova porta em UFW respeitando `auto_open_ports`.
+- Regista porta em `state.yaml`.
+- Grava `/etc/sudoers.d/lsm` com NOPASSWD em `/usr/sbin/lsm` (gate em-app).
+- Wrapper `/usr/local/bin/lsm` é criado pelo `PersistentPreRunE` (idempotente).
 
 > ⚠️ **Após confirmar SSH na nova porta**, remove a 22:
 > ```bash
@@ -273,20 +322,21 @@ network:
 > ```
 
 ### docker
-- Remove pacotes conflituosos (`docker.io`, `podman`, etc).
-- Instala Docker CE oficial via repo apt.
-- Cria user dedicado para containers (config `docker.rootless_user`).
-- Configura subuid/subgid + `loginctl enable-linger`.
-- Corre `dockerd-rootless-setuptool.sh install` como esse user.
+- Skip `RemoveConflicts` se docker já instalado (evita destruir engine ativo).
+- Caso contrário remove `docker.io`, `podman`, `runc` (não toca em docker-ce*).
+- Instala Docker CE oficial via repo apt + `slirp4netns` + `fuse-overlayfs` + `systemd-container`.
+- Cria user `docker.rootless_user` + pede password em runtime se ainda não existir.
+- subuid/subgid + `loginctl enable-linger`.
+- `dockerd-rootless-setuptool.sh install` via `machinectl shell <user>@`.
 - Desativa Docker rootful (`docker.service` + `docker.socket`).
 
 ### fail2ban
 - `apt install fail2ban`.
-- Escreve `/etc/fail2ban/jail.local`:
+- `/etc/fail2ban/jail.local`:
   - `bantime=1h`, `findtime=10m`, `maxretry=5`
-  - `ignoreip = 127.0.0.1/8 ::1 + allowed_ips`
-  - `[sshd]` enabled na porta de `ssh.port`
-  - `backend=systemd` (Debian moderno usa journald)
+  - `ignoreip = 127.0.0.1/8 ::1 + ufw.SpecificSources(ssh.port, "tcp")`
+  - `[sshd]` enabled na `ssh.port`
+  - `backend=systemd`
 - Restart fail2ban.
 
 ### upgrades
@@ -323,35 +373,85 @@ network:
 
 ---
 
-## Whitelist de IPs
+## Portas + whitelist de IPs
 
-Lista única em `network.allowed_ips` controla **acesso** às portas geridas pelo lsm.
+**Source of truth = UFW**. Config NÃO armazena IPs nem portas. lsm parsea
+`ufw status` para saber estado real, e `state.yaml::managed_ports` é só
+a lista de portas que o lsm gere.
 
-- **Vazia** → quando módulo abre porta, abre a TODOS (`ufw allow PORT/tcp`).
-- **Populada** → quando módulo abre porta, só esses IPs podem ligar
-  (`ufw allow from IP to any port PORT proto tcp`, uma regra por IP).
+Cada porta gerida tem o seu próprio set de IPs permitidos. Estados possíveis:
 
-### Adicionar IP em produção
+- **Aberta a todos**: regra `Anywhere` no UFW (sem `from <ip>`).
+- **Restrita**: 1+ regras `ALLOW from <ip> to any port P proto T`, e SEM `Anywhere`.
+
+### Por porta (recomendado)
+
+```bash
+sudo lsm port add 3306/tcp "MySQL"            # abre a todos + regista
+sudo lsm port allow 3306/tcp 1.2.3.4          # restringe só a esse IP
+sudo lsm port allow 3306/tcp 192.168.1.0/24   # adiciona outro
+sudo lsm port revoke 3306/tcp 1.2.3.4         # tira IP (reabre a todos se ficou vazio)
+sudo lsm port remove 3306/tcp                 # fecha + remove de state
+sudo lsm port list                            # tabela de estado
+```
+
+### Atalho global (aplica a todas as portas geridas)
 
 ```bash
 sudo lsm add-ip 1.2.3.4
-```
-
-Ações:
-1. Adiciona à `network.allowed_ips` no `config.yaml`.
-2. Para cada porta em `state.yaml` (managed_ports): `ufw allow from 1.2.3.4 to any port X proto Y`.
-3. Se a whitelist passou de 0 para 1 IP, remove as regras "todos" das portas geridas.
-
-### Remover IP
-
-```bash
 sudo lsm remove-ip 1.2.3.4
 ```
 
-Ações:
-1. Remove de `config.yaml`.
-2. Para cada porta gerida: `ufw delete allow from 1.2.3.4 to any port X proto Y`.
-3. Se ficou whitelist vazia, reabre as portas geridas a TODOS.
+Útil quando partilham a mesma whitelist (ex: SSH + admin panel restritos
+à mesma equipa).
+
+---
+
+## Containers (docker rootless)
+
+`docker.rootless_user` (default `docker24`) é o **único** user com acesso ao
+daemon docker. dev24 (operator) **não** corre containers — design intencional.
+
+Para correr containers, três caminhos:
+
+### 1. Como root, escalando para o user (scripts)
+
+```bash
+sudo -iu docker24 docker run hello-world
+sudo -iu docker24 docker compose -f /home/docker24/stacks/app/compose.yaml up -d
+```
+
+`sudo -i` cria login shell, dispara user systemd manager, popula
+`XDG_RUNTIME_DIR` — `docker` cliente encontra socket sem mais nada.
+
+### 2. SSH directo como docker24 (interactivo)
+
+A partir desta versão, `lsm docker` pede password ao criar o user, pelo que
+podes fazer login directo:
+
+```bash
+ssh -p 2210 docker24@<servidor>
+docker run hello-world
+```
+
+(Servidor antigo onde docker24 ficou sem password? `sudo passwd docker24` arranja.)
+
+### 3. `su -` a partir de root
+
+```bash
+su - docker24
+docker ps
+```
+
+### Pitfalls
+
+- `sudo docker` plain **falha**: `DOCKER_HOST` default aponta a
+  `/var/run/docker.sock` (rootful) que está desativado. Tem de ser via login
+  do docker user OU `DOCKER_HOST=unix:///run/user/$(id -u docker24)/docker.sock`
+  no env.
+- Para expor porta do container ao mundo: `sudo lsm port add 3306/tcp "MySQL"`
+  e depois `lsm port allow 3306/tcp <IP>` para restringir.
+- Compose files vivem tipicamente em `/home/docker24/stacks/<app>/compose.yaml`.
 
 ---
 
@@ -361,34 +461,39 @@ Ações:
 sudo lsm validate
 ```
 
-Audita o estado atual contra o config. Output exemplo:
+Audita o estado atual contra config + `state.installed_modules`. Módulos
+não instalados pelo lsm aparecem como `[--]` (skipped, não falham). Se
+houver FAILs e o caller for **admin**, pergunta se quer re-correr os
+módulos com falha para aplicar fixes.
+
+Output exemplo:
 
 ```
-=== Validar Setup ===
+=== Validate Setup ===
 Config: /etc/lsm/config.yaml
 
-  [OK  ] UFW instalado
-  [OK  ] UFW ativo
-  [OK  ] user 'dev24' existe
+  [OK  ] UFW installed
+  [OK  ] UFW active
+  [OK  ] user 'dev24' exists
   [OK  ] sshd Port = 2210
   [OK  ] sshd PermitRootLogin no
-  [OK  ] UFW permite porta SSH 2210/tcp
-  [OK  ] user 'docker24' existe
-  [OK  ] subuid configurado — docker24:100000:65536
-  [OK  ] Docker engine presente
-  [OK  ] UFW permite 2210/tcp (SSH)
-  [OK  ] fail2ban instalado
-  [OK  ] fail2ban ativo
-  [OK  ] unattended-upgrades instalado
+  [OK  ] UFW allows SSH port 2210/tcp
+  [OK  ] user 'docker24' exists
+  [OK  ] subuid configured — docker24:165536:65536
+  [OK  ] Docker engine present
+  [OK  ] UFW allows 2210/tcp (SSH)
+  [OK  ] fail2ban installed
+  [OK  ] fail2ban active
+  [OK  ] unattended-upgrades installed
   [OK  ] unattended-upgrades enabled
   [OK  ] NTP enabled (timedatectl)
-  [OK  ] Sistema sincronizado
-  [OK  ] Timezone = Europe/Lisbon
+  [OK  ] system synchronized
+  [OK  ] Timezone = Etc/UTC
   [OK  ] sysctl net.ipv4.ip_forward = 1
   [OK  ] sysctl vm.swappiness = 10
-  [FAIL] hostname = srv01 — atual: debian
+  [FAIL] hostname = srv01 — current: debian
 
-Total: 19 OK, 1 FAIL
+Total: 19 OK, 1 FAIL, 0 skipped
 ```
 
 Exit code != 0 se houver FAIL → útil em pipelines de CI/health check.
@@ -400,18 +505,26 @@ Exit code != 0 se houver FAIL → útil em pipelines de CI/health check.
 ### Servidor novo
 
 ```bash
-# 1. Instala
-sudo dpkg -i lsm_X.Y.Z_amd64.deb
+# 1. Instala (como root, via console / IPMI)
+ARCH=$(dpkg --print-architecture)
+rm -f lsm_*.deb
+wget -O lsm_${ARCH}.deb \
+  https://github.com/santospedro1993/LittleServerManager/releases/latest/download/lsm_${ARCH}.deb
+sudo apt install -y ./lsm_${ARCH}.deb
 
-# 2. Wizard + corre tudo
+# 2. Bootstrap + wizard
 sudo lsm
-# (responde às perguntas, escolhe "all" no fim)
+# Passos automáticos:
+# - apt update + upgrade (se reboot needed → prompt, lsm sai, reentras depois)
+# - wizard pergunta config + password do dev24 + password do docker24
+# - corre módulos baseline + docker (se opt-in)
+# - oferece auto-launch do menu no login do dev24
 
-# 3. Confirma SSH funciona na nova porta numa SESSÃO PARALELA
+# 3. SESSÃO PARALELA: confirma SSH funciona na nova porta
 ssh -p 2210 dev24@<server>
 
-# 4. Remove a porta 22 do UFW
-sudo ufw delete allow 22/tcp
+# 4. Remove a porta 22 do UFW (só após confirmar 2210)
+sudo lsm port revoke ... # ou manualmente: sudo ufw delete allow 22/tcp
 
 # 5. Valida
 sudo lsm validate
@@ -420,27 +533,57 @@ sudo lsm validate
 ### Adicionar acesso a colaborador
 
 ```bash
+# IP único para todas as portas geridas:
 sudo lsm add-ip 203.0.113.42
+
+# Ou só para uma porta específica:
+sudo lsm port allow 2210/tcp 203.0.113.42
 ```
 
-Pronto. Sincroniza todas as portas geridas.
+### Update + reboot
+
+```bash
+sudo lsm system update     # corre apt update + upgrade + autoremove
+                            # se serviços/kernel/microcode pendem → pergunta reboot
+sudo lsm system reboot     # reboot now / amanhã 04:00 / adiar
+```
 
 ### Re-correr só um módulo
 
 ```bash
-sudo lsm fail2ban   # re-aplica jail (após editar config)
+sudo lsm fail2ban   # re-aplica jail
 sudo lsm validate   # confirma
+```
+
+### Correr containers
+
+```bash
+sudo -iu docker24 docker run hello-world
+# ou ssh directo como docker24, ou su - docker24
 ```
 
 ---
 
 ## Troubleshooting
 
-**`lsm: command not found`**
-`/usr/sbin` não está no PATH do user normal. Usa `sudo lsm` (sudo inclui sbin).
+**`lsm: command not found` após reboot**
+Já não devia acontecer — wrapper em `/usr/local/bin/lsm` é instalado pelo
+`PersistentPreRunE` na primeira invocação como root. Se faltar:
+```bash
+sudo tee /usr/local/bin/lsm >/dev/null <<'EOF'
+#!/bin/sh
+exec sudo /usr/sbin/lsm "$@"
+EOF
+sudo chmod +x /usr/local/bin/lsm
+```
 
 **`must run as root`**
-Sempre `sudo lsm`. Subcomandos read-only (`validate`, `timesync status`) também precisam de root para algumas verificações.
+Subcomandos exigem root. Sudoers drop-in dá NOPASSWD ao SSH user para
+`/usr/sbin/lsm`. Operações destrutivas requerem login direto como root.
+
+**`this operation requires direct root login`**
+Estás como dev24 (operator) a tentar correr cmd destrutivo. Login como root
+via console/IPMI/`su -`.
 
 **`UFW não instalado`** ao correr `lsm ssh`
 Corre primeiro: `sudo lsm firewall`.
@@ -449,27 +592,46 @@ Corre primeiro: `sudo lsm firewall`.
 Acede via consola (DigitalOcean/Hetzner web console, etc). Restaura porta 22:
 ```bash
 sudo ufw allow 22/tcp
-sudo systemctl restart sshd
+sudo systemctl reload-or-restart ssh
+```
+
+**Dialog "Which services should be restarted?" durante apt upgrade**
+Não devia aparecer. Drop-in em `/etc/needrestart/conf.d/99-lsm.conf` força
+modo list-only. Se faltar:
+```bash
+sudo tee /etc/needrestart/conf.d/99-lsm.conf >/dev/null <<'EOF'
+$nrconf{restart} = 'l';
+$nrconf{kernelhints} = -1;
+$nrconf{ucodehints} = 0;
+EOF
 ```
 
 **`unattended-upgrade` não corre automaticamente**
 Verifica timer: `systemctl status apt-daily.timer apt-daily-upgrade.timer`.
 
+**Docker rootless falha "One of slirp4netns ... needs to be installed"**
+Faltam runtime deps em Debian minimal:
+```bash
+sudo apt install -y slirp4netns fuse-overlayfs systemd-container
+sudo lsm docker
+```
+
 **Config corrompido**
 ```bash
 sudo cp /etc/lsm/config.yaml /etc/lsm/config.yaml.bak
 sudo rm /etc/lsm/config.yaml
-sudo lsm   # arranca wizard
+sudo lsm   # arranca bootstrap
 ```
 
 ---
 
 ## Limites conhecidos
 
-- **Só Debian** (12+). RHEL/Alpine/Arch não suportados.
+- **Só Debian** (12+, testado em 13 trixie). RHEL/Alpine/Arch não suportados.
 - **Requer systemd** (timedatectl, systemctl, machinectl, loginctl).
-- **Não gere SSH keys** (planeado: módulo `ssh-keys` para deploy de `authorized_keys` + desligar PasswordAuth).
-- **Não gere swap, WireGuard, reverse proxy, backups** (módulos futuros).
+- **Não gere SSH keys** (planeado: módulo `ssh-keys` para deploy de `authorized_keys` + desligar `PasswordAuthentication`).
+- **Não gere wireguard, reverse proxy, backups** (módulos futuros).
+- **Auto-launch só p/ bash login shells** (lê `~/.profile`). zsh/fish precisaria de drop-in adicional.
 
 ---
 
@@ -478,7 +640,8 @@ sudo lsm   # arranca wizard
 Releases são feitos via GitHub Actions:
 
 1. Vai ao tab **Actions** → **Release (.deb)** → **Run workflow**.
-2. Indica `version` (ex: `0.1.0`) + `branch` (default `main`).
+2. Indica `version` (ex: `0.1.0`). Branch é a escolhida no dropdown
+   nativo "Use workflow from" (default `master`).
 3. Workflow:
    - Faz checkout da branch.
    - Compila linux/amd64 + linux/arm64.
