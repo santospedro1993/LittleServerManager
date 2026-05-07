@@ -98,20 +98,22 @@ func runWizard() error {
 	c.Network.AutoOpenPorts = []string{"ask", "true", "false"}[idx-1]
 
 	fmt.Println()
-	fmt.Println("─── Modules to install ───────────────────────")
-	fmt.Println("Pick which modules run after this wizard. SSH + firewall")
-	fmt.Println("are mandatory (the security baseline depends on them).")
+	fmt.Println("─── Modules ──────────────────────────────────")
+	fmt.Println("Baseline modules (firewall, ssh, sysctl, timesync, hostname,")
+	fmt.Println("fail2ban, upgrades) are always installed — they are the")
+	fmt.Println("security baseline. Only opt-in modules are prompted below.")
 
+	// Mandatory baseline.
 	c.Modules.Firewall = true
 	c.Modules.SSH = true
-	c.Modules.Sysctl = prompt.Confirm("Install module: sysctl  (kernel hardening)?", true)
-	c.Modules.Timesync = prompt.Confirm("Install module: timesync (NTP + timezone)?", true)
-	if c.Hostname != "" {
-		c.Modules.Hostname = prompt.Confirm("Install module: hostname (apply chosen hostname)?", true)
-	}
-	c.Modules.Docker = prompt.Confirm("Install module: docker   (engine + rootless user)?", true)
-	c.Modules.Fail2ban = prompt.Confirm("Install module: fail2ban (anti SSH brute-force)?", true)
-	c.Modules.Upgrades = prompt.Confirm("Install module: upgrades (unattended security patches)?", true)
+	c.Modules.Sysctl = true
+	c.Modules.Timesync = true
+	c.Modules.Hostname = c.Hostname != "" // skip if no hostname configured
+	c.Modules.Fail2ban = true
+	c.Modules.Upgrades = true
+
+	// Opt-in modules (ask one by one — extend this block when adding new ones).
+	c.Modules.Docker = prompt.Confirm("Install docker (engine + rootless user)?", true)
 
 	c.SetPath(cfgFile)
 	if err := os.MkdirAll(filepath.Dir(cfgFile), 0755); err != nil {
