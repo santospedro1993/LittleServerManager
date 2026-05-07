@@ -1,6 +1,7 @@
 name: Release (.deb)
 
-# Trigger manual via Actions tab. Pede versão + branch.
+# Trigger manual via Actions tab. Pede só versão.
+# A branch é a escolhida no dropdown "Use workflow from" do GitHub (github.ref_name).
 # Cria tag v<version>, faz build do binário (amd64 + arm64),
 # empacota em .deb e publica como GitHub Release.
 
@@ -10,11 +11,6 @@ on:
       version:
         description: 'Versão (sem prefixo "v"). Ex: 0.1.0'
         required: true
-        type: string
-      branch:
-        description: 'Branch base'
-        required: true
-        default: 'main'
         type: string
 
 permissions:
@@ -28,10 +24,10 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     steps:
-      - name: Checkout (${{ inputs.branch }})
+      - name: Checkout (${{ github.ref_name }})
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ github.ref_name }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -174,10 +170,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (${{ inputs.branch }})
+      - name: Checkout (${{ github.ref_name }})
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ github.ref_name }}
           fetch-depth: 0   # tags + history para release notes
 
       - name: Download artifacts
@@ -193,7 +189,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
-          target_commitish: ${{ inputs.branch }}
+          target_commitish: ${{ github.ref_name }}
           name: v${{ inputs.version }}
           generate_release_notes: true
           files: artifacts/*.deb

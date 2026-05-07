@@ -272,6 +272,7 @@ Flags globais:
 - **Cobra**: cada subcommand em ficheiro próprio (`cmd/X.go`), regista via `init()`.
 - **`SilenceUsage: true`** já no rootCmd — erros não imprimem usage spam.
 - **`validate`** deve devolver erro se algum check FAIL → exit code != 0 → CI-friendly.
+- **Commits/PRs**: NÃO incluir `Co-Authored-By: Claude ...` nem `🤖 Generated with [Claude Code]` em commits ou bodies de PRs. Autoria é só do user.
 
 ---
 
