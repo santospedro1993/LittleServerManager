@@ -171,9 +171,9 @@ func wrapSub(fn func() error) func() (bool, error) {
 }
 
 // statusMenu — host metrics. Read-only; available to admin + operator.
-// Both modes return to the menu without a "press Enter to continue" pause:
-// the rendered status frame stays on screen and the next menu prompt is
-// drawn directly underneath it.
+// Both modes return to the menu without a "press Enter to continue" pause.
+// We DO print a horizontal rule between the rendered frame and the next
+// menu prompt so the eye can quickly find where the menu begins again.
 func statusMenu() error {
 	for {
 		idx := prompt.ChooseEx("Status", []string{
@@ -188,6 +188,7 @@ func statusMenu() error {
 			if err := statusOnce(); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
+			printDivider()
 		case 2:
 			statusLive = true
 			err := statusLiveLoop()
@@ -195,8 +196,17 @@ func statusMenu() error {
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
+			printDivider()
 		}
 	}
+}
+
+// printDivider draws a horizontal rule between command output and the next
+// menu prompt. Used after non-paused actions (status, anywhere a Pause
+// would feel redundant) so the menu doesn't appear glued to the output.
+func printDivider() {
+	fmt.Println()
+	fmt.Println("────────────────────────────────────────────────────────")
 }
 
 // systemMenu — update + reboot. Available to both admin and operator.
