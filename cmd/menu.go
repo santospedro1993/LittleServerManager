@@ -56,7 +56,9 @@ func runMenu() error {
 		if admin {
 			options = append(options, "Correr módulo (firewall / ssh / docker / all)")
 			actions = append(actions, chooseAndRunModule)
-			options = append(options, "Adicionar IP à whitelist")
+			options = append(options, "Gerir portas (add / remove / allow / revoke / list)")
+			actions = append(actions, portMenu)
+			options = append(options, "Adicionar IP a TODAS as portas geridas (atalho global)")
 			actions = append(actions, func() error {
 				ip := prompt.AskIPOrCIDR("IP/CIDR a adicionar")
 				if ip == "" {
@@ -64,7 +66,7 @@ func runMenu() error {
 				}
 				return addIP(ip)
 			})
-			options = append(options, "Remover IP da whitelist")
+			options = append(options, "Remover IP de TODAS as portas geridas (atalho global)")
 			actions = append(actions, interactiveRemoveIP)
 			options = append(options, "Re-correr Setup Inicial (sobrescreve config)")
 			actions = append(actions, runWizard)
@@ -155,6 +157,101 @@ func runAllModules() error {
 		}
 	}
 	return nil
+}
+
+func portMenu() error {
+	for {
+		idx := prompt.Choose("Gerir portas", []string{
+			"Listar portas geridas + sources UFW",
+			"Adicionar porta",
+			"Remover porta",
+			"Permitir IP numa porta específica",
+			"Revogar IP numa porta específica",
+			"voltar",
+		})
+		switch idx {
+		case 1:
+			if err := portList(); err != nil {
+				return err
+			}
+		case 2:
+			spec := prompt.Ask("PORT/PROTO (ex: 3306/tcp)", "")
+			if spec == "" {
+				continue
+			}
+			port, proto, err := parsePortProto(spec)
+			if err != nil {
+				fmt.Println("erro:", err)
+				continue
+			}
+			label := prompt.Ask("Label", spec)
+			restrict := prompt.Confirm("Adicionar fechado (sem ALLOW Anywhere) e dar acesso por IP depois?", false)
+			if err := portAdd(port, proto, label, restrict); err != nil {
+				return err
+			}
+		case 3:
+			port, proto, ok := pickManagedPort("Remover qual porta?")
+			if !ok {
+				continue
+			}
+			if !prompt.Confirm(fmt.Sprintf("Confirmas remover %d/%s?", port, proto), false) {
+				continue
+			}
+			if err := portRemove(port, proto); err != nil {
+				return err
+			}
+		case 4:
+			port, proto, ok := pickManagedPort("Permitir IP em qual porta?")
+			if !ok {
+				continue
+			}
+			ip := prompt.AskIPOrCIDR("IP/CIDR a permitir")
+			if ip == "" {
+				continue
+			}
+			if err := portAllow(port, proto, ip); err != nil {
+				return err
+			}
+		case 5:
+			port, proto, ok := pickManagedPort("Revogar IP em qual porta?")
+			if !ok {
+				continue
+			}
+			srcs := ufw.SpecificSources(port, proto)
+			if len(srcs) == 0 {
+				fmt.Println("Sem IPs específicos — porta aberta a todos ou sem regras.")
+				continue
+			}
+			i := prompt.Choose("Qual IP revogar?", append(srcs, "voltar"))
+			if i == len(srcs)+1 {
+				continue
+			}
+			if err := portRevoke(port, proto, srcs[i-1]); err != nil {
+				return err
+			}
+		case 6:
+			return nil
+		}
+	}
+}
+
+func pickManagedPort(question string) (int, string, bool) {
+	st, err := state.Load(cfgFile)
+	if err != nil || len(st.ManagedPorts) == 0 {
+		fmt.Println("Sem portas geridas.")
+		return 0, "", false
+	}
+	opts := make([]string, 0, len(st.ManagedPorts)+1)
+	for _, p := range st.ManagedPorts {
+		opts = append(opts, fmt.Sprintf("%d/%s — %s", p.Port, p.Proto, p.Label))
+	}
+	opts = append(opts, "voltar")
+	idx := prompt.Choose(question, opts)
+	if idx == len(opts) {
+		return 0, "", false
+	}
+	p := st.ManagedPorts[idx-1]
+	return p.Port, p.Proto, true
 }
 
 func interactiveRemoveIP() error {

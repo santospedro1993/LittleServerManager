@@ -50,6 +50,16 @@ func (s *State) Save() error {
 	return os.WriteFile(s.path, data, 0600)
 }
 
+// HasPort reports whether the given port/proto is registered.
+func (s *State) HasPort(port int, proto string) bool {
+	for _, e := range s.ManagedPorts {
+		if e.Port == port && e.Proto == proto {
+			return true
+		}
+	}
+	return false
+}
+
 // AddPort registers a managed port if not already present.
 func (s *State) AddPort(p ManagedPort) bool {
 	for _, e := range s.ManagedPorts {

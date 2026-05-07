@@ -236,8 +236,13 @@ lsm init                  # wizard
 lsm validate              # audita estado vs config (read-only)
 lsm all                   # corre todos os módulos por ordem
 lsm update-server         # apt update + upgrade + autoremove + auto-restart
-lsm add-ip [IP]           # ALLOW from IP em todas as portas geridas (UFW direto)
-lsm remove-ip [IP]        # DELETE allow from IP (com fallback p/ Anywhere se ficar vazio)
+lsm add-ip [IP]           # atalho: ALLOW from IP em TODAS as portas geridas
+lsm remove-ip [IP]        # atalho: DELETE allow from IP (com fallback p/ Anywhere)
+lsm port add <P>/<PROTO> [LABEL]    # registar + abrir (--restrict abre fechado)
+lsm port remove <P>/<PROTO>          # fechar + remover de state
+lsm port allow <P>/<PROTO> <IP>      # ALLOW from IP só nessa porta
+lsm port revoke <P>/<PROTO> <IP>     # DELETE allow from IP só nessa porta
+lsm port list                        # tabela: portas geridas + sources UFW
 lsm firewall|ssh|docker|fail2ban|upgrades|timesync|sysctl|hostname
 lsm timesync sync|status
 ```
