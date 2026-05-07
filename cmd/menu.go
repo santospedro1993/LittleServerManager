@@ -38,8 +38,11 @@ func runMenu() error {
 		labels = append(labels, "Status")
 		actions = append(actions, wrapSub(statusMenu))
 
+		// Validate runs the full check; if anything failed AND caller is
+		// admin, offers to re-run the failing modules. Operator-class
+		// callers see the report and a hint to log in as root for fixes.
 		labels = append(labels, "Validate")
-		actions = append(actions, wrap(func() error { _, _, e := runValidate(); return e }))
+		actions = append(actions, wrap(func() error { return runValidateAndMaybeFix(admin) }))
 
 		labels = append(labels, "System")
 		actions = append(actions, wrapSub(systemMenu))
@@ -50,9 +53,6 @@ func runMenu() error {
 		if admin {
 			labels = append(labels, "Modules")
 			actions = append(actions, wrapSub(modulesMenu))
-
-			labels = append(labels, "Check & Fix")
-			actions = append(actions, wrap(runCheckAndFix))
 
 			labels = append(labels, "Setup wizard")
 			actions = append(actions, wrap(runWizard))
@@ -331,11 +331,18 @@ func modulesMenu() error {
 	}
 }
 
-// runCheckAndFix runs validate, then offers to re-run modules with failures.
-func runCheckAndFix() error {
+// runValidateAndMaybeFix runs validate and, when there are failures and the
+// caller is admin, offers to re-run the failing modules to apply fixes.
+// Validate alone (without the fix path) is also reachable by operators —
+// they see the same report plus a hint to escalate.
+func runValidateAndMaybeFix(admin bool) error {
 	failed, n, _ := runValidate()
 	if n == 0 {
-		fmt.Println("\nNothing to fix — all checks pass.")
+		fmt.Println("\nAll checks pass.")
+		return nil
+	}
+	if !admin {
+		fmt.Println("\nLog in as root to apply fixes (`lsm` from a root shell).")
 		return nil
 	}
 	if len(failed) == 0 {
