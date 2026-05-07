@@ -83,16 +83,28 @@ func DisableRootful() {
 	runner.TryRun("systemctl", "disable", "--now", "docker.service", "docker.socket")
 }
 
-func userExists(name string) bool {
+func UserExists(name string) bool {
 	_, err := user.Lookup(name)
 	return err == nil
 }
 
-func SetupRootlessUser(name string) error {
-	if !userExists(name) {
+// SetupRootlessUser provisions the rootless docker user. If the user does
+// not yet exist, password must be non-empty — it's set via chpasswd and
+// then immediately discarded (lsm never persists it). Re-running on an
+// existing user keeps whatever password is already set; pass "" in that
+// case.
+func SetupRootlessUser(name, password string) error {
+	if !UserExists(name) {
+		if password == "" {
+			return fmt.Errorf("empty password creating user '%s'", name)
+		}
 		if err := runner.Run("useradd", "-m", "-s", "/bin/bash", name); err != nil {
 			return err
 		}
+		if err := runner.Stdin(fmt.Sprintf("%s:%s", name, password), "chpasswd"); err != nil {
+			return err
+		}
+		runner.Log("User '%s' created (rootless docker).", name)
 	}
 
 	subuid, _ := runner.Capture("grep", fmt.Sprintf("^%s:", name), "/etc/subuid")
