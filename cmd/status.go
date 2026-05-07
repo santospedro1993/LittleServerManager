@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -54,25 +55,62 @@ func statusLiveLoop() error {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
 
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
+	// Put the tty into non-canonical mode WITHOUT echo, with a 2s timeout
+	// (time=20 deciseconds, min=0 = non-blocking poll). Each os.Stdin.Read
+	// returns either when a key is pressed or after 2s — that's our refresh
+	// cadence. No goroutine, no leftover blocked reader after exit.
+	hadTTY := setRawTTYPoll(true)
+	defer setRawTTYPoll(false)
 
-	// Gather BEFORE clearing the screen so there's no blank period while
-	// the CPU + network samples (1s combined) are running.
 	snap := gatherStatus()
 	clearScreen()
 	renderStatus(snap)
+
+	buf := make([]byte, 1)
 	for {
 		select {
 		case <-stop:
 			fmt.Println()
 			return nil
-		case <-t.C:
-			snap := gatherStatus()
-			clearScreen()
-			renderStatus(snap)
+		default:
 		}
+
+		if hadTTY {
+			n, _ := os.Stdin.Read(buf)
+			if n > 0 {
+				k := buf[0]
+				if k == 'q' || k == 'Q' || k == 'x' || k == 'X' || k == 0x1b || k == '\r' || k == '\n' {
+					fmt.Println()
+					return nil
+				}
+				// any other key: redraw immediately (no wait)
+			}
+		} else {
+			// No tty: fall back to a blocking 2s sleep + signal-only exit.
+			time.Sleep(2 * time.Second)
+		}
+
+		snap := gatherStatus()
+		clearScreen()
+		renderStatus(snap)
 	}
+}
+
+// setRawTTYPoll configures /dev/tty for single-char polling reads with a 2s
+// timeout, and disables echo so keystrokes don't pollute the rendered frame.
+// Restore-mode (enable=false) returns to canonical line mode + echo.
+//
+// We shell out to stty rather than pulling in golang.org/x/term — fewer deps.
+// MIN=0 + TIME=20 makes Stdin.Read return after at most 2s even if nothing
+// is typed; that's how the refresh ticker is implemented in this loop.
+func setRawTTYPoll(enable bool) bool {
+	args := []string{"-F", "/dev/tty"}
+	if enable {
+		args = append(args, "-icanon", "-echo", "min", "0", "time", "20")
+	} else {
+		args = append(args, "icanon", "echo")
+	}
+	return exec.Command("stty", args...).Run() == nil
 }
 
 // clearScreen uses the ANSI sequence so we don't depend on `clear`.
@@ -163,7 +201,7 @@ func renderStatus(s statusSnap) {
 
 	if statusLive {
 		fmt.Println()
-		fmt.Println("(refreshing every 2s — Ctrl+C to exit)")
+		fmt.Println("(refreshing every 2s — press q / x / Esc / Enter or Ctrl+C to exit)")
 	}
 }
 
