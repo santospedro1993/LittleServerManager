@@ -171,6 +171,9 @@ func wrapSub(fn func() error) func() (bool, error) {
 }
 
 // statusMenu — host metrics. Read-only; available to admin + operator.
+// Both modes return to the menu without a "press Enter to continue" pause:
+// the rendered status frame stays on screen and the next menu prompt is
+// drawn directly underneath it.
 func statusMenu() error {
 	for {
 		idx := prompt.ChooseEx("Status", []string{
@@ -181,13 +184,10 @@ func statusMenu() error {
 		case prompt.ChoiceBack:
 			return nil
 		case 1:
-			fmt.Println("─── output ─────────────────────────────────")
 			statusLive = false
 			if err := statusOnce(); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
-			fmt.Println("────────────────────────────────────────────")
-			prompt.Pause("")
 		case 2:
 			statusLive = true
 			err := statusLiveLoop()
