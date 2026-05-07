@@ -28,9 +28,8 @@ Tipicamente há um script bash gigante por equipa, frágil e não-reversível.
 
 ## Instalar
 
-> Substitui `OWNER` pelo dono do repo (ex: `pedro/lsm`) nos URLs abaixo.
-> Página de releases: **https://github.com/OWNER/lsm/releases**
-> Latest direto: **https://github.com/OWNER/lsm/releases/latest**
+> Repo: **https://github.com/santospedro1993/LittleServerManager**
+> Releases: **https://github.com/santospedro1993/LittleServerManager/releases**
 
 ### Via .deb (recomendado) — sempre a versão mais recente
 
@@ -38,20 +37,28 @@ Detecta arch automaticamente (`amd64` ou `arm64`):
 
 ```bash
 ARCH=$(dpkg --print-architecture)
-wget https://github.com/OWNER/lsm/releases/latest/download/lsm_${ARCH}.deb
+rm -f lsm_*.deb                                   # limpa downloads antigos
+wget -O lsm_${ARCH}.deb \
+  https://github.com/santospedro1993/LittleServerManager/releases/latest/download/lsm_${ARCH}.deb
 sudo apt install -y ./lsm_${ARCH}.deb
 sudo lsm
 ```
 
+> ⚠️ `wget -O` força sobrescrever o ficheiro. Sem isso, `wget` cria
+> `lsm_amd64.deb.1` em re-downloads e o `apt install` instala o
+> **antigo** que continua em disco. Por isso o `rm -f` antes.
+
 > Usar `apt install ./file.deb` em vez de `dpkg -i` resolve dependências
-> automaticamente (caso futuras versões as tenham).
+> automaticamente.
 
 ### Versão específica
 
 ```bash
 VER=0.1.0
 ARCH=$(dpkg --print-architecture)
-wget https://github.com/OWNER/lsm/releases/download/v${VER}/lsm_${VER}_${ARCH}.deb
+rm -f lsm_*.deb
+wget -O lsm_${VER}_${ARCH}.deb \
+  https://github.com/santospedro1993/LittleServerManager/releases/download/v${VER}/lsm_${VER}_${ARCH}.deb
 sudo apt install -y ./lsm_${VER}_${ARCH}.deb
 ```
 
@@ -101,7 +108,9 @@ Mesma instalação substitui o binário e atualiza o template de config.
 
 ```bash
 ARCH=$(dpkg --print-architecture)
-wget https://github.com/OWNER/lsm/releases/latest/download/lsm_${ARCH}.deb
+rm -f lsm_*.deb                                   # crítico: senão apt instala o antigo
+wget -O lsm_${ARCH}.deb \
+  https://github.com/santospedro1993/LittleServerManager/releases/latest/download/lsm_${ARCH}.deb
 sudo apt install -y ./lsm_${ARCH}.deb
 ```
 
@@ -124,7 +133,7 @@ O `postinst` deteta upgrade e mostra:
 
 ```bash
 lsm --version
-curl -s https://api.github.com/repos/OWNER/lsm/releases/latest | grep tag_name
+curl -s https://api.github.com/repos/santospedro1993/LittleServerManager/releases/latest | grep tag_name
 ```
 
 ### Após upgrade — validar
