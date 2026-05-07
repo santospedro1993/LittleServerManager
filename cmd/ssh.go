@@ -41,6 +41,9 @@ var sshCmd = &cobra.Command{
 		if err := sshmod.CreateUser(cfg.SSH.User, password); err != nil {
 			return err
 		}
+		if err := sshmod.GrantPasswordlessLSM(cfg.SSH.User); err != nil {
+			return err
+		}
 		if err := sshmod.Harden(cfg.SSH.Port); err != nil {
 			return err
 		}

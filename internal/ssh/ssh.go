@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"fmt"
+	"os"
 	"os/user"
 
 	"lsm/internal/runner"
@@ -51,6 +52,30 @@ func Harden(port int) error {
 		return err
 	}
 	runner.Log("sshd na porta %d, root login desativado.", port)
+	return nil
+}
+
+// GrantPasswordlessLSM writes /etc/sudoers.d/lsm so the given user can run
+// /usr/sbin/lsm via sudo without being prompted for a password. The file is
+// validated with `visudo -cf` before being moved into place — a malformed
+// drop-in would break sudo for everyone, so we never install it untested.
+func GrantPasswordlessLSM(name string) error {
+	const final = "/etc/sudoers.d/lsm"
+	const tmp = "/etc/sudoers.d/.lsm.tmp"
+
+	body := fmt.Sprintf("# Managed by lsm — do not edit by hand.\n%s ALL=(root) NOPASSWD: /usr/sbin/lsm\n", name)
+
+	if err := os.WriteFile(tmp, []byte(body), 0440); err != nil {
+		return fmt.Errorf("escrever sudoers tmp: %w", err)
+	}
+	if err := runner.Run("visudo", "-cf", tmp); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sudoers syntax inválida (não foi instalado): %w", err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		return fmt.Errorf("mover sudoers para %s: %w", final, err)
+	}
+	runner.Log("sudo NOPASSWD configurado: %s pode correr 'sudo lsm' sem password.", name)
 	return nil
 }
 

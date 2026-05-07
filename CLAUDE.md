@@ -209,7 +209,7 @@ Padrão obrigatório (segue ssh.go ou fail2ban.go como template):
 | 2 | `timesync` | `set-timezone` + `set-ntp true` + enable timesyncd | `timezone` |
 | 3 | `sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` + `sysctl --system` | — (hardcoded) |
 | 4 | `hostname` | `hostnamectl` + atualiza `/etc/hosts` | `hostname`, `fqdn` (skip se vazio) |
-| 5 | `ssh` | Cria user (pede password em runtime se ainda não existe), hardening sshd, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
+| 5 | `ssh` | Cria user (pede password em runtime se ainda não existe), grava `/etc/sudoers.d/lsm` (NOPASSWD para `/usr/sbin/lsm`), hardening sshd, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
 | 6 | `docker` | Remove conflitos, install Docker CE, rootless setup user dedicado | `docker.rootless_user` |
 | 7 | `fail2ban` | Install, escreve `jail.local` (port=ssh.port, ignoreip = `ufw.SpecificSources` da porta SSH) | `ssh.port` |
 | 8 | `upgrades` | Install + escreve `20auto-upgrades` + enable service | — |
@@ -341,6 +341,7 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 | `/etc/sysctl.d/99-lsm.conf` | sysctl tuning | lsm sysctl |
 | `/etc/fail2ban/jail.local` | jail config | lsm fail2ban |
 | `/etc/apt/apt.conf.d/20auto-upgrades` | unattended-upgrades periodic | lsm upgrades |
+| `/etc/sudoers.d/lsm` | NOPASSWD para `/usr/sbin/lsm` ao SSH user | lsm ssh |
 | `/usr/share/doc/lsm/README.md` | docs | dpkg |
 
 ---
