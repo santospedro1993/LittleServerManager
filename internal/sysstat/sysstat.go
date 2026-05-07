@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -235,6 +236,94 @@ func NetRate(sample time.Duration) (map[string][2]float64, error) {
 
 // CPUCount returns the number of online logical CPUs.
 func CPUCount() int { return runtime.NumCPU() }
+
+// CPUFreq holds clock-frequency info for the host. All values are in MHz.
+// AvgCur is the mean current frequency across online cores; Max is the
+// per-core hardware maximum (cpuinfo_max_freq); MaxAggregate is Max * cores
+// — the upper bound of compute the box can deliver right now.
+type CPUFreq struct {
+	AvgCur       float64
+	Max          float64
+	MaxAggregate float64
+	Source       string // "cpufreq" or "cpuinfo"
+}
+
+// ReadCPUFreq probes /sys/devices/system/cpu/*/cpufreq for live frequency
+// values. Falls back to parsing /proc/cpuinfo "cpu MHz" lines when cpufreq
+// isn't exposed (some virtualized environments hide it). Returns a zero
+// CPUFreq with empty Source if neither source produced useful data.
+func ReadCPUFreq() CPUFreq {
+	out := CPUFreq{}
+
+	// Preferred path: cpufreq sysfs.
+	curs, _ := filepath.Glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq")
+	if len(curs) > 0 {
+		var sum float64
+		var n int
+		for _, p := range curs {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			v, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
+			if err != nil {
+				continue
+			}
+			sum += v / 1000.0 // kHz → MHz
+			n++
+		}
+		if n > 0 {
+			out.AvgCur = sum / float64(n)
+			out.Source = "cpufreq"
+		}
+		// Per-core max: same value on every core in the typical case.
+		// Read cpu0's value as canonical.
+		if b, err := os.ReadFile("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"); err == nil {
+			if v, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil {
+				out.Max = v / 1000.0
+			}
+		}
+	}
+
+	// Fallback: /proc/cpuinfo "cpu MHz".
+	if out.Source == "" {
+		f, err := os.Open("/proc/cpuinfo")
+		if err == nil {
+			defer f.Close()
+			sc := bufio.NewScanner(f)
+			var sum float64
+			var n int
+			for sc.Scan() {
+				line := sc.Text()
+				if !strings.HasPrefix(line, "cpu MHz") {
+					continue
+				}
+				colon := strings.Index(line, ":")
+				if colon < 0 {
+					continue
+				}
+				v, err := strconv.ParseFloat(strings.TrimSpace(line[colon+1:]), 64)
+				if err != nil {
+					continue
+				}
+				sum += v
+				n++
+			}
+			if n > 0 {
+				out.AvgCur = sum / float64(n)
+				out.Source = "cpuinfo"
+			}
+		}
+	}
+
+	if out.Max == 0 && out.AvgCur > 0 {
+		// Best-effort: assume current sample IS the max if we couldn't
+		// read cpuinfo_max_freq. Better than printing 0.
+		out.Max = out.AvgCur
+	}
+	out.MaxAggregate = out.Max * float64(CPUCount())
+	return out
+}
 
 // FormatBytes returns a short human-readable size (e.g. "12.3 GB").
 func FormatBytes(n uint64) string {

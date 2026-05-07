@@ -62,6 +62,9 @@ func runMenu() error {
 		if idx == prompt.ChoiceExit {
 			return nil
 		}
+		// Wipe the menu screen so the action's output renders into a clean
+		// buffer; the next menu iteration prints below the output.
+		clearMenuScreen()
 
 		ran, err := actions[idx-1]()
 		if err != nil {
@@ -172,8 +175,8 @@ func wrapSub(fn func() error) func() (bool, error) {
 
 // statusMenu — host metrics. Read-only; available to admin + operator.
 // Both modes return to the menu without a "press Enter to continue" pause.
-// We DO print a horizontal rule between the rendered frame and the next
-// menu prompt so the eye can quickly find where the menu begins again.
+// Each option clears the screen before running so the rendered frame
+// occupies the whole terminal and the next menu prompt prints under it.
 func statusMenu() error {
 	for {
 		idx := prompt.ChooseEx("Status", []string{
@@ -184,12 +187,14 @@ func statusMenu() error {
 		case prompt.ChoiceBack:
 			return nil
 		case 1:
+			clearMenuScreen()
 			statusLive = false
 			if err := statusOnce(); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
 			printDivider()
 		case 2:
+			clearMenuScreen()
 			statusLive = true
 			err := statusLiveLoop()
 			statusLive = false
@@ -209,6 +214,12 @@ func printDivider() {
 	fmt.Println("────────────────────────────────────────────────────────")
 }
 
+// clearMenuScreen wipes the terminal between picking a menu option and the
+// action running. The action's output then renders into a clean buffer and
+// the next menu iteration prints right below it — matching the desired
+// "previous menu disappears, action output stays, menu redraws below" UX.
+func clearMenuScreen() { fmt.Print("\033[H\033[2J") }
+
 // systemMenu — update + reboot. Available to both admin and operator.
 func systemMenu() error {
 	for {
@@ -220,19 +231,17 @@ func systemMenu() error {
 		case prompt.ChoiceBack:
 			return nil
 		case 1:
-			fmt.Println("─── output ─────────────────────────────────")
+			clearMenuScreen()
 			if err := runSystemUpdate(); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
-			fmt.Println("────────────────────────────────────────────")
-			prompt.Pause("")
+			printDivider()
 		case 2:
-			fmt.Println("─── output ─────────────────────────────────")
+			clearMenuScreen()
 			if err := promptReboot(); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
-			fmt.Println("────────────────────────────────────────────")
-			prompt.Pause("")
+			printDivider()
 		}
 	}
 }
@@ -267,12 +276,11 @@ func networkMenu(admin bool) func() error {
 			if idx == prompt.ChoiceBack {
 				return nil
 			}
-			fmt.Println("─── output ─────────────────────────────────")
+			clearMenuScreen()
 			if err := actions[idx-1](); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
-			fmt.Println("────────────────────────────────────────────")
-			prompt.Pause("")
+			printDivider()
 		}
 	}
 }
@@ -294,7 +302,7 @@ func modulesMenu() error {
 		if idx == prompt.ChoiceBack {
 			return nil
 		}
-		fmt.Println("─── output ─────────────────────────────────")
+		clearMenuScreen()
 		var err error
 		switch idx {
 		case 1:
@@ -319,8 +327,7 @@ func modulesMenu() error {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 		}
-		fmt.Println("────────────────────────────────────────────")
-		prompt.Pause("")
+		printDivider()
 	}
 }
 

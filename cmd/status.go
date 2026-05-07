@@ -124,6 +124,7 @@ type statusSnap struct {
 	now     string
 	cpuPct  float64
 	cores   int
+	freq    sysstat.CPUFreq
 	mem     sysstat.MemInfo
 	disks   []sysstat.DiskUsage
 	netRate map[string][2]float64
@@ -140,6 +141,7 @@ func gatherStatus() statusSnap {
 		now:     time.Now().Format("2006-01-02 15:04:05"),
 		cpuPct:  cpuPct,
 		cores:   sysstat.CPUCount(),
+		freq:    sysstat.ReadCPUFreq(),
 		mem:     mem,
 		disks:   disks,
 		netRate: netRate,
@@ -157,6 +159,13 @@ func renderStatus(s statusSnap) {
 	fmt.Println()
 	fmt.Printf("CPU      %5.1f%%  on %d logical cores\n", cpuPct, s.cores)
 	fmt.Printf("         %s\n", bar(cpuPct, 50))
+	if s.freq.Source != "" {
+		fmt.Printf("         clock: avg %s / per-core max %s / aggregate max %s  (%s)\n",
+			formatMHz(s.freq.AvgCur),
+			formatMHz(s.freq.Max),
+			formatMHz(s.freq.MaxAggregate),
+			s.freq.Source)
+	}
 
 	// Memory
 	fmt.Println()
@@ -203,6 +212,16 @@ func renderStatus(s statusSnap) {
 		fmt.Println()
 		fmt.Println("(refreshing every 2s — press q / x / Esc / Enter or Ctrl+C to exit)")
 	}
+}
+
+// formatMHz prints a frequency in MHz or GHz depending on magnitude.
+// Aggregated values across many cores easily exceed 10 GHz so the GHz
+// branch keeps the output compact.
+func formatMHz(mhz float64) string {
+	if mhz >= 1000 {
+		return fmt.Sprintf("%.2f GHz", mhz/1000)
+	}
+	return fmt.Sprintf("%.0f MHz", mhz)
 }
 
 // bar renders a simple ASCII progress bar for percent values.
