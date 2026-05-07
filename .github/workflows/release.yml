@@ -195,31 +195,36 @@ jobs:
           files: artifacts/*.deb
           fail_on_unmatched_files: true
           body: |
-            ## Install (latest)
+            ## Install / Upgrade (latest)
 
             ```bash
             ARCH=$(dpkg --print-architecture)
-            wget https://github.com/${{ github.repository }}/releases/latest/download/lsm_${ARCH}.deb
+            rm -f lsm_*.deb                       # crítico: senão apt instala o antigo
+            wget -O lsm_${ARCH}.deb \
+              https://github.com/${{ github.repository }}/releases/latest/download/lsm_${ARCH}.deb
             sudo apt install -y ./lsm_${ARCH}.deb
             sudo lsm
             ```
 
+            > ⚠️ `wget` sem `-O` cria `lsm_amd64.deb.1` quando já existe um download
+            > anterior, e `apt install` instala o **antigo** que ficou em disco.
+            > Por isso o `rm -f` + `-O`.
+
             ## Install (esta versão específica)
 
             ```bash
-            # amd64
-            wget https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/lsm_${{ inputs.version }}_amd64.deb
-            sudo apt install -y ./lsm_${{ inputs.version }}_amd64.deb
-
-            # arm64
-            wget https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/lsm_${{ inputs.version }}_arm64.deb
-            sudo apt install -y ./lsm_${{ inputs.version }}_arm64.deb
+            ARCH=$(dpkg --print-architecture)
+            rm -f lsm_*.deb
+            wget -O lsm_${{ inputs.version }}_${ARCH}.deb \
+              https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/lsm_${{ inputs.version }}_${ARCH}.deb
+            sudo apt install -y ./lsm_${{ inputs.version }}_${ARCH}.deb
             ```
 
             ## Upgrade
 
-            Mesmo comando de install. `config.yaml` + `state.yaml` preservados.
-            `config.example.yaml` é atualizado para refletir o schema desta versão.
+            Mesmo comando do bloco "Install / Upgrade (latest)" acima.
+            `config.yaml` + `state.yaml` preservados. `config.example.yaml`
+            é atualizado para refletir o schema desta versão.
 
             ## Locations
 
