@@ -118,7 +118,7 @@ Whitelist de IPs **NÃO** está aqui (lê-se direto do UFW). Password SSH **NÃO
 está aqui (pedida em runtime quando o user é criado).
 
 ```yaml
-timezone: Europe/Lisbon          # default se omitido
+timezone: Etc/UTC                # default se omitido
 hostname: srv01                  # opcional; vazio → módulo hostname não corre
 fqdn: srv01.exemplo.com          # opcional
 

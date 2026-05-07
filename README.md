@@ -185,7 +185,7 @@ Override do path da config: `sudo lsm --config /caminho/outro.yaml`
 `/etc/lsm/config.yaml`:
 
 ```yaml
-timezone: Europe/Lisbon
+timezone: Etc/UTC
 hostname: srv01            # vazio → módulo hostname não corre
 fqdn: srv01.exemplo.com    # opcional
 

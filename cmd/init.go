@@ -53,8 +53,8 @@ func runWizard() error {
 
 	fmt.Println("─── Timezone ─────────────────────────────────")
 	fmt.Println("Server timezone. Affects logs and timestamps.")
-	fmt.Println("e.g. Europe/Lisbon, Europe/London, UTC.")
-	c.Timezone = prompt.Ask("Timezone", "Europe/Lisbon")
+	fmt.Println("e.g. Etc/UTC, Europe/Lisbon, Europe/London.")
+	c.Timezone = prompt.Ask("Timezone", "Etc/UTC")
 
 	fmt.Println()
 	fmt.Println("─── Hostname ─────────────────────────────────")

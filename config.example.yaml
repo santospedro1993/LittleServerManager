@@ -2,7 +2,7 @@
 # Does NOT contain secrets (passwords are prompted at runtime).
 # Does NOT contain UFW whitelist (derived from the firewall itself).
 
-timezone: Europe/Lisbon
+timezone: Etc/UTC
 
 # Hostname is optional. Empty → hostname module won't run.
 hostname: srv01

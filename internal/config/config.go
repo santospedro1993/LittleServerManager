@@ -86,7 +86,7 @@ func (c *Config) validate() error {
 		c.Network.AutoOpenPorts = "ask"
 	}
 	if c.Timezone == "" {
-		c.Timezone = "Europe/Lisbon"
+		c.Timezone = "Etc/UTC"
 	}
 	// firewall + ssh are mandatory regardless of what the file says.
 	c.Modules.Firewall = true
