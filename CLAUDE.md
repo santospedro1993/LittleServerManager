@@ -131,24 +131,57 @@ docker:
 
 network:
   auto_open_ports: ask           # true | false | ask
+
+# Quais módulos opcionais correr em `lsm all` e na pós-wizard auto-run.
+# firewall + ssh são sempre true (baseline de segurança); chamadas
+# diretas a `lsm <módulo>` correm sempre, ignorando estas flags.
+modules:
+  firewall: true                 # forçado a true em validate()
+  ssh: true                      # forçado a true em validate()
+  sysctl: true
+  timesync: true
+  hostname: true                 # ignorado em runtime se cfg.Hostname == ""
+  docker: true                   # único opt-in pedido no wizard
+  fail2ban: true
+  upgrades: true
 ```
 
 Campos com default em `internal/config/config.go::validate()`. Required ones
-falham com erro explícito.
+falham com erro explícito. Configs antigos sem bloco `modules:` são tratados
+como legacy: se TODAS as flags opcionais ficarem `false` após unmarshal,
+`validate()` força tudo a `true` para não perder módulos silenciosamente.
 
 ---
 
 ## 7. Schema do `state.yaml`
 
-Gerido pelo lsm. NÃO editar à mão.
+Gerido pelo lsm. NÃO editar à mão. Vive em `filepath.Dir(cfgPath) + /state.yaml`
+(default `/etc/lsm/state.yaml`). Ausência do ficheiro não é erro — `state.Load`
+devolve `State{}` vazio e o primeiro `Save()` cria-o.
 
 ```yaml
 managed_ports:
   - {port: 2210, proto: tcp, label: SSH}
+
+# Módulos que correram com sucesso ao menos uma vez.
+# Usado por `validate` para decidir o que avaliar e pelo menu para mostrar
+# estado. Helpers: `state.MarkInstalled(name)` / `state.IsInstalled(name)`.
+# `cmd/root.go::markInstalled()` é chamado no fim de cada cmd/<X>.go após
+# sucesso (best-effort: falhas a carregar o state não abortam o módulo).
+installed_modules:
+  - firewall
+  - ssh
+  - sysctl
+  - timesync
+  - hostname
+  - docker
+  - fail2ban
+  - upgrades
 ```
 
 Cada módulo que abre porta whitelisted **deve** registar via
-`st.AddPort(state.ManagedPort{...})` + `st.Save()`.
+`st.AddPort(state.ManagedPort{...})` + `st.Save()`. Cada módulo que corre com
+sucesso **deve** chamar `markInstalled("<nome>")` (helper em `cmd/root.go`).
 
 ---
 
@@ -217,8 +250,10 @@ Sequência quando `sudo lsm` corre e `/etc/lsm/config.yaml` não existe
    qualquer escolha, lsm sai. Re-correr depois retoma daqui.
 3. Wizard (timezone — default `Etc/UTC` —, hostname, ssh user/port,
    docker user, política `auto_open_ports`, **só docker como opt-in**).
-   firewall + ssh + sysctl + timesync + hostname + fail2ban + upgrades
-   são baseline (sempre true).
+   firewall + ssh + sysctl + timesync + fail2ban + upgrades são baseline
+   incondicional (`true`). hostname é baseline **condicional**: a flag é
+   `c.Hostname != ""` — se o user deixou o hostname vazio no wizard, o
+   módulo fica `false` e não corre (`cmd/init.go:111`).
 4. `runAllModules()` respeitando `cfg.Modules.<X>` flags.
 5. Prompt: ativar auto-launch do menu para o ssh.user (escreve bloco
    marcado em `~/.profile`, NÃO em `.bash_profile` — ver secção 14).
