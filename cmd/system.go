@@ -53,13 +53,18 @@ func runSystemUpdate() error {
 	}
 
 	runner.Section("system update: configure needrestart (list-only, no inline restarts)")
-	if err := sysupdate.EnsureNeedrestart(); err != nil {
-		runner.Log("warning: needrestart not installed (%v) — service-restart detection limited to /var/run/reboot-required.", err)
+	if err := sysupdate.WriteNeedrestartConfig(); err != nil {
+		runner.Log("warning: failed to write needrestart drop-in (%v) — apt upgrade may show interactive dialog if needrestart is installed.", err)
 	}
 
 	runner.Section("system update: apt update")
 	if err := sysupdate.Update(); err != nil {
 		return fmt.Errorf("apt update: %w", err)
+	}
+
+	runner.Section("system update: ensure needrestart present")
+	if err := sysupdate.EnsureNeedrestart(); err != nil {
+		runner.Log("warning: needrestart install failed (%v) — service-restart detection limited to /var/run/reboot-required.", err)
 	}
 
 	runner.Section("system update: apt upgrade")

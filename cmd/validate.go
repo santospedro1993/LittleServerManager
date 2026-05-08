@@ -50,6 +50,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 	fmt.Println()
 
 	pass := 0
+	warned := 0
 	skipped := 0
 	failedSet := map[string]bool{}
 	currentModule := ""
@@ -69,6 +70,14 @@ func runValidate() (failedModules []string, fail int, err error) {
 			fmt.Printf("  [%s] %s\n", mark, name)
 		} else {
 			fmt.Printf("  [%s] %s — %s\n", mark, name, detail)
+		}
+	}
+	warn := func(name, detail string) {
+		warned++
+		if detail == "" {
+			fmt.Printf("  [WARN] %s\n", name)
+		} else {
+			fmt.Printf("  [WARN] %s — %s\n", name, detail)
 		}
 	}
 	skip := func(module, reason string) {
@@ -167,8 +176,19 @@ func runValidate() (failedModules []string, fail int, err error) {
 	// --- timesync ---
 	currentModule = "timesync"
 	if st.IsInstalled("timesync") {
-		check("NTP enabled (timedatectl)", timesync.NTPEnabled(), "")
-		check("system synchronized", timesync.Synced(), "")
+		ntpEnabled := timesync.NTPEnabled()
+		check("NTP enabled (timedatectl)", ntpEnabled, "")
+		switch {
+		case timesync.Synced():
+			check("system synchronized", true, "")
+		case ntpEnabled:
+			// Transient post-boot: timesyncd is up but first poll hasn't
+			// returned yet. Don't fail validate — re-running in a few
+			// seconds usually flips this to OK.
+			warn("system synchronized", "NTP enabled, first poll pending — re-run validate in a few seconds")
+		default:
+			check("system synchronized", false, "")
+		}
 		curTZ := timesync.CurrentTimezone()
 		check(fmt.Sprintf("Timezone = %s", cfg.Timezone),
 			curTZ == cfg.Timezone, "current: "+curTZ)
@@ -203,7 +223,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 	}
 
 	fmt.Println()
-	fmt.Printf("Total: %d OK, %d FAIL, %d skipped\n", pass, fail, skipped)
+	fmt.Printf("Total: %d OK, %d FAIL, %d WARN, %d skipped\n", pass, fail, warned, skipped)
 
 	for m := range failedSet {
 		failedModules = append(failedModules, m)
