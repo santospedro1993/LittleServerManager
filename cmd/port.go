@@ -7,6 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"lsm/internal/config"
+	"lsm/internal/prompt"
 	"lsm/internal/runner"
 	"lsm/internal/state"
 	"lsm/internal/ufw"
@@ -214,27 +216,73 @@ func portRevoke(port int, proto, ip string) error {
 	if !ufw.Installed() {
 		return fmt.Errorf("UFW não instalado")
 	}
-	st, err := state.Load(cfgFile)
-	if err != nil {
+	// Check if this revoke would leave SSH port without any rules → lockout risk.
+	remaining := 0
+	for _, src := range ufw.SpecificSources(port, proto) {
+		if src != ip {
+			remaining++
+		}
+	}
+	willBeClosed := remaining == 0 && !ufw.IsOpenToAll(port, proto)
+	if willBeClosed && isSSHPort(port, proto) && !confirmCloseSSH(ip) {
+		return nil
+	}
+	if err := ufw.DeleteAllowFrom(ip, port, proto); err != nil {
 		return err
 	}
-	_ = ufw.DeleteAllowFrom(ip, port, proto)
+	runner.Log("UFW: %d/%s já não permite %s.", port, proto, ip)
 	if len(ufw.SpecificSources(port, proto)) == 0 && !ufw.IsOpenToAll(port, proto) {
-		// reabre a todos para evitar locked-out involuntário
-		label := fmt.Sprintf("%d/%s", port, proto)
-		for _, p := range st.ManagedPorts {
-			if p.Port == port && p.Proto == proto {
-				label = p.Label
-				break
+		runner.Log("UFW: %d/%s sem regras — porta fechada.", port, proto)
+	}
+	return nil
+}
+
+// isSSHPort reports whether port/proto matches the configured SSH port.
+// Config-load errors → false (best-effort; we only use this for safety prompts).
+func isSSHPort(port int, proto string) bool {
+	if proto != "tcp" {
+		return false
+	}
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return false
+	}
+	return cfg.SSH.Port == port
+}
+
+// confirmCloseSSH asks the admin to confirm closing the SSH port. Returns true
+// if it's safe to proceed (--yes flag, or explicit confirmation). Lockout
+// risk is real — without other access (console/IPMI), there's no way back in.
+func confirmCloseSSH(ip string) bool {
+	if yes {
+		return true
+	}
+	fmt.Println()
+	fmt.Printf("⚠ Revoking %s would leave the SSH port with NO rules.\n", ip)
+	fmt.Println("  Result: SSH closed for everyone. Recovery needs console/IPMI access.")
+	return prompt.Confirm("Proceed anyway?", false)
+}
+
+// portsLosingAllRules returns the managed ports that would end up rule-less
+// if the given IP were revoked across all of them. Used to warn about SSH
+// lockout before `remove-ip` deletes a whole batch of rules.
+func portsLosingAllRules(st *state.State, ip string) []state.ManagedPort {
+	var out []state.ManagedPort
+	for _, p := range st.ManagedPorts {
+		if ufw.IsOpenToAll(p.Port, p.Proto) {
+			continue
+		}
+		remaining := 0
+		for _, src := range ufw.SpecificSources(p.Port, p.Proto) {
+			if src != ip {
+				remaining++
 			}
 		}
-		if err := ufw.Allow(port, proto, label); err != nil {
-			return err
+		if remaining == 0 {
+			out = append(out, p)
 		}
-		runner.Log("UFW: %d/%s sem IPs específicos — reaberto a todos.", port, proto)
 	}
-	runner.Log("UFW: %d/%s já não permite %s.", port, proto, ip)
-	return nil
+	return out
 }
 
 func portList() error {

@@ -141,12 +141,18 @@ func runValidate() (failedModules []string, fail int, err error) {
 	}
 
 	// --- Managed ports (whenever UFW is installed) ---
-	currentModule = ""
+	// Attribute each port's FAIL to the module that opens it on re-run,
+	// so "Check & Fix" knows what to re-execute. User-added ports
+	// (`lsm port add`) have no owner — those FAILs surface but won't
+	// trigger an auto-fix (re-running port add isn't idempotent enough
+	// to do silently).
 	if ufw.Installed() {
 		for _, p := range st.ManagedPorts {
+			currentModule = portOwnerModule(p.Port, p.Proto, cfg)
 			check(fmt.Sprintf("UFW allows %d/%s (%s)", p.Port, p.Proto, p.Label),
 				ufw.PortPermitted(p.Port, p.Proto), "")
 		}
+		currentModule = ""
 	}
 
 	// --- fail2ban ---
@@ -155,7 +161,23 @@ func runValidate() (failedModules []string, fail int, err error) {
 		check("fail2ban installed", fail2ban.Installed(), "")
 		if fail2ban.Installed() {
 			out, _ := runner.Capture("systemctl", "is-active", "fail2ban")
-			check("fail2ban active", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
+			active := strings.TrimSpace(out) == "active"
+			check("fail2ban active", active, strings.TrimSpace(out))
+			// Active-but-not-guarding is the silent-failure mode we care
+			// about: bad jail.local syntax, filter regex error, wrong
+			// logpath. JailLoaded checks the daemon registered the jail;
+			// JailHealthy confirms its filter actually started.
+			if active {
+				loaded, err := fail2ban.JailLoaded("sshd")
+				if err != nil {
+					check("jail sshd loaded", false, err.Error())
+				} else {
+					check("jail sshd loaded", loaded, "")
+					if loaded {
+						check("jail sshd healthy", fail2ban.JailHealthy("sshd"), "")
+					}
+				}
+			}
 		}
 	} else {
 		skip("fail2ban", "not installed by lsm")
@@ -232,6 +254,17 @@ func runValidate() (failedModules []string, fail int, err error) {
 		err = fmt.Errorf("validation failed for %d check(s)", fail)
 	}
 	return failedModules, fail, err
+}
+
+// portOwnerModule returns the module that re-applies a given port's UFW
+// rule when run. Empty string = user-managed port (e.g. `lsm port add`),
+// which has no auto-fix path. Extend this when adding modules that
+// register their own managed ports (wireguard, etc).
+func portOwnerModule(port int, proto string, cfg *config.Config) string {
+	if proto == "tcp" && port == cfg.SSH.Port {
+		return "ssh"
+	}
+	return ""
 }
 
 // moduleRunners maps validate-tracked module names to their RunE entrypoints.

@@ -134,7 +134,7 @@ func runBootstrap() error {
 	}
 	fmt.Println()
 	fmt.Println("─── Auto-launch on login ─────────────────────")
-	fmt.Println("Add a snippet to ~/.bash_profile so that whenever")
+	fmt.Println("Add a snippet to ~/.profile so that whenever")
 	fmt.Printf("'%s' logs in via SSH, the lsm menu opens automatically.\n", cfg.SSH.User)
 	fmt.Println("(They can press 'x' to exit and drop into a regular shell.)")
 	if prompt.Confirm("Enable auto-launch for "+cfg.SSH.User+"?", true) {

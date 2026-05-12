@@ -138,16 +138,27 @@ func removeIP(ip string) error {
 		return err
 	}
 
-	for _, p := range st.ManagedPorts {
-		_ = ufw.DeleteAllowFrom(ip, p.Port, p.Proto)
+	// Pre-flight: if any port loses all rules AND one of those is SSH, confirm
+	// before proceeding. Aborts the whole batch on a "no" so we don't leave
+	// the firewall in a half-revoked state.
+	closing := portsLosingAllRules(st, ip)
+	sshClosing := false
+	for _, p := range closing {
+		if isSSHPort(p.Port, p.Proto) {
+			sshClosing = true
+			break
+		}
+	}
+	if sshClosing && !confirmCloseSSH(ip) {
+		return nil
+	}
 
-		// Se a porta ficou sem IPs específicos E não estava aberta a todos,
-		// reabre a todos para evitar locked-out.
+	for _, p := range st.ManagedPorts {
+		if err := ufw.DeleteAllowFrom(ip, p.Port, p.Proto); err != nil {
+			runner.Log("UFW: delete %d/%s from %s failed (ignored): %v", p.Port, p.Proto, ip, err)
+		}
 		if len(ufw.SpecificSources(p.Port, p.Proto)) == 0 && !ufw.IsOpenToAll(p.Port, p.Proto) {
-			if err := ufw.Allow(p.Port, p.Proto, p.Label); err != nil {
-				return err
-			}
-			runner.Log("UFW: %d/%s sem IPs específicos — reaberto a todos.", p.Port, p.Proto)
+			runner.Log("UFW: %d/%s sem regras — porta fechada.", p.Port, p.Proto)
 		}
 	}
 	fmt.Printf("Removido %s. Whitelist UFW = %v\n", ip, currentWhitelist())

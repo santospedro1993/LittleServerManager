@@ -7,17 +7,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CurrentSchemaVersion is the latest schema understood by this build.
+// Bump it whenever the YAML layout changes in a way that needs an
+// in-memory migration on Load. A config file missing `schema_version`
+// is treated as v0 (pre-versioning era).
+const CurrentSchemaVersion = 1
+
 // Config represents lsm intent — preferences and target values.
 // It does NOT persist secrets (passwords) nor derived runtime data
 // (effective UFW whitelists). Those live in state or the system itself.
 type Config struct {
-	Timezone string        `yaml:"timezone"`
-	Hostname string        `yaml:"hostname,omitempty"`
-	FQDN     string        `yaml:"fqdn,omitempty"`
-	SSH      SSHConfig     `yaml:"ssh"`
-	Docker   DockerConfig  `yaml:"docker"`
-	Network  NetworkConfig `yaml:"network"`
-	Modules  ModulesConfig `yaml:"modules"`
+	SchemaVersion int           `yaml:"schema_version"`
+	Timezone      string        `yaml:"timezone"`
+	Hostname      string        `yaml:"hostname,omitempty"`
+	FQDN          string        `yaml:"fqdn,omitempty"`
+	SSH           SSHConfig     `yaml:"ssh"`
+	Docker        DockerConfig  `yaml:"docker"`
+	Network       NetworkConfig `yaml:"network"`
+	Modules       ModulesConfig `yaml:"modules"`
 
 	path string `yaml:"-"`
 }
@@ -91,19 +98,24 @@ func (c *Config) validate() error {
 	// firewall + ssh are mandatory regardless of what the file says.
 	c.Modules.Firewall = true
 	c.Modules.SSH = true
-	// Backward compat: configs written before the modules section existed
-	// have all optional flags zeroed (false) after unmarshal. Treat the
-	// "everything optional disabled" pattern as legacy and default it to
-	// "everything enabled" so old configs don't silently lose modules.
-	allOptionalFalse := !c.Modules.Sysctl && !c.Modules.Timesync && !c.Modules.Hostname &&
-		!c.Modules.Docker && !c.Modules.Fail2ban && !c.Modules.Upgrades
-	if allOptionalFalse {
+	// Schema migration. SchemaVersion == 0 means the config was written
+	// before lsm started versioning the file. In that era, optional
+	// modules weren't expressed in YAML — they were all implicitly on.
+	// After unmarshal those fields are zero (false), so we flip them to
+	// the legacy-era default (true) to avoid silently disabling modules
+	// on existing installs. v1+ configs are honored as written.
+	if c.SchemaVersion == 0 {
 		c.Modules.Sysctl = true
 		c.Modules.Timesync = true
 		c.Modules.Hostname = true
 		c.Modules.Docker = true
 		c.Modules.Fail2ban = true
 		c.Modules.Upgrades = true
+		fmt.Fprintf(os.Stderr,
+			"warning: %s has no schema_version (legacy config) — assuming all modules enabled.\n"+
+				"         Re-run `lsm init` or add `schema_version: %d` and the modules you actually want.\n",
+			c.path, CurrentSchemaVersion)
+		c.SchemaVersion = CurrentSchemaVersion
 	}
 	return nil
 }

@@ -32,10 +32,18 @@ func CreateUser(name, password string) error {
 			return fmt.Errorf("empty password creating user '%s'", name)
 		}
 		if err := runner.Run("useradd", "-m", "-s", "/bin/bash", name); err != nil {
-			return err
+			return fmt.Errorf("useradd '%s' failed: %w (no changes made — pick another name or fix the underlying issue and retry)", name, err)
 		}
 		if err := runner.Stdin(fmt.Sprintf("%s:%s", name, password), "chpasswd"); err != nil {
-			return err
+			// Rollback: useradd succeeded but the account has no password.
+			// Leaving it would create a passwordless account — depending on
+			// PAM config (nullok) that could be a login vector. Tear down
+			// before surfacing the error.
+			runner.Log("WARNING: chpasswd failed for '%s' — rolling back useradd to avoid a passwordless account.", name)
+			if rbErr := runner.Run("userdel", "-r", name); rbErr != nil {
+				return fmt.Errorf("chpasswd failed (%w) AND rollback userdel failed (%v) — MANUAL CLEANUP NEEDED: `userdel -r %s`", err, rbErr, name)
+			}
+			return fmt.Errorf("set password for '%s': %w (user rolled back; retry)", name, err)
 		}
 		runner.Log("User '%s' created.", name)
 	}

@@ -3,13 +3,60 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"regexp"
 
 	"github.com/spf13/cobra"
 
 	"lsm/internal/config"
 	"lsm/internal/prompt"
 )
+
+// posixUserRe matches valid Linux usernames per useradd(8) NAME_REGEX:
+// lowercase letter or underscore, then up to 31 of [a-z0-9_-]. We don't
+// allow uppercase to dodge case-folding surprises across LDAP/Samba/etc.
+var posixUserRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// reservedUsers blocks names that ship with Debian or are conventional
+// system accounts. Creating/repurposing any of these via lsm risks
+// clobbering passwords or breaking the host (e.g. systemd-* users).
+var reservedUsers = map[string]bool{
+	"root": true, "daemon": true, "bin": true, "sys": true, "sync": true,
+	"games": true, "man": true, "lp": true, "mail": true, "news": true,
+	"uucp": true, "proxy": true, "www-data": true, "backup": true,
+	"list": true, "irc": true, "gnats": true, "nobody": true, "_apt": true,
+	"systemd-network": true, "systemd-resolve": true, "systemd-timesync": true,
+	"messagebus": true, "sshd": true, "polkitd": true,
+}
+
+// askValidNewUser prompts for a username, looping until the input is a
+// valid POSIX name AND not on the reserved list. If the user already
+// exists on the system, asks for explicit confirmation — re-running the
+// wizard against an existing-but-lsm-managed user is legitimate, but
+// pointing it at an unrelated account would mutate sudo membership and
+// (in CreateUser) skip password setup silently.
+func askValidNewUser(question, def string) string {
+	for {
+		name := prompt.Ask(question, def)
+		switch {
+		case !posixUserRe.MatchString(name):
+			fmt.Println("Invalid username: use [a-z_][a-z0-9_-]{0,31} (start with letter/underscore, ≤32 chars).")
+			continue
+		case reservedUsers[name]:
+			fmt.Printf("'%s' is a reserved system user — pick another.\n", name)
+			continue
+		}
+		if _, err := user.Lookup(name); err == nil {
+			fmt.Printf("User '%s' already exists on this host.\n", name)
+			fmt.Println("  Continuing keeps its current password and removes it from the 'sudo' group.")
+			if !prompt.Confirm("Use this existing user anyway?", false) {
+				continue
+			}
+		}
+		return name
+	}
+}
 
 func currentHostname() string {
 	h, err := os.Hostname()
@@ -49,7 +96,7 @@ func runWizard() error {
 		}
 	}
 
-	c := &config.Config{}
+	c := &config.Config{SchemaVersion: config.CurrentSchemaVersion}
 
 	fmt.Println("─── Timezone ─────────────────────────────────")
 	fmt.Println("Server timezone. Affects logs and timestamps.")
@@ -72,7 +119,7 @@ func runWizard() error {
 	fmt.Println("─── SSH ──────────────────────────────────────")
 	fmt.Println("Non-root admin user for SSH. Replaces direct root login")
 	fmt.Println("(which will be disabled).")
-	c.SSH.User = prompt.Ask("Username", "dev24")
+	c.SSH.User = askValidNewUser("Username", "dev24")
 	fmt.Println()
 	fmt.Println("SSH port (non-22 reduces automated brute-force attempts).")
 	fmt.Println("Must be free on the host. 2210 is a safe default.")
@@ -82,7 +129,7 @@ func runWizard() error {
 	fmt.Println("─── Docker ───────────────────────────────────")
 	fmt.Println("Dedicated user that runs containers in rootless mode.")
 	fmt.Println("Containers run as this user, not root.")
-	c.Docker.RootlessUser = prompt.Ask("Docker rootless user", "docker24")
+	c.Docker.RootlessUser = askValidNewUser("Docker rootless user", "docker24")
 
 	fmt.Println()
 	fmt.Println("─── UFW open-port policy ─────────────────────")

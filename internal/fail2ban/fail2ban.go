@@ -51,3 +51,40 @@ func Enable() error {
 func Status() (string, error) {
 	return runner.Capture("fail2ban-client", "status", "sshd")
 }
+
+// JailLoaded reports whether the named jail appears in
+// `fail2ban-client status`'s Jail list. A jail that's enabled in
+// jail.local but failed to start (bad filter regex, missing logpath
+// when backend != systemd, etc.) does NOT show up here — so this is
+// the right signal to distinguish "daemon up" from "actually guarding".
+//
+// Returns false + error when fail2ban-client itself fails (daemon
+// down, socket missing). False + nil error means the daemon answered
+// but the jail isn't loaded.
+func JailLoaded(name string) (bool, error) {
+	out, err := runner.Capture("fail2ban-client", "status")
+	if err != nil {
+		return false, fmt.Errorf("fail2ban-client status: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "Jail list:") {
+			continue
+		}
+		idx := strings.Index(line, ":")
+		for _, j := range strings.Split(line[idx+1:], ",") {
+			if strings.TrimSpace(j) == name {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// JailHealthy runs `fail2ban-client status <name>` and reports whether
+// it returned without error. JailLoaded checks the jail is listed;
+// JailHealthy confirms the filter actually started and can be queried
+// — a jail can be listed but in a faulted state.
+func JailHealthy(name string) bool {
+	_, err := runner.Capture("fail2ban-client", "status", name)
+	return err == nil
+}

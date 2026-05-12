@@ -2,6 +2,11 @@
 # Does NOT contain secrets (passwords are prompted at runtime).
 # Does NOT contain UFW whitelist (derived from the firewall itself).
 
+# Schema version of this file. Bumped by lsm when the YAML layout changes.
+# Files without this key are treated as legacy (v0): lsm forces all optional
+# modules to true so old installs don't silently lose modules.
+schema_version: 1
+
 timezone: Etc/UTC
 
 # Hostname is optional. Empty → hostname module won't run.
