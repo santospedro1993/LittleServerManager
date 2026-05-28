@@ -19,11 +19,14 @@ var portCmd = &cobra.Command{
 	Short: "Manage UFW rules for arbitrary ports (per-port whitelist)",
 }
 
-var portAddRestrict bool
+var (
+	portAddRestrict bool
+	portAddHost     bool
+)
 
 var portAddCmd = &cobra.Command{
 	Use:   "add <PORT>/<PROTO> [LABEL]",
-	Short: "Register + open a port (default: open to all; --restrict opens nothing)",
+	Short: "Register + open a port (default: docker-published, open to all; --host for host service, --restrict for no Anywhere rule)",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := RequireAdmin(); err != nil {
@@ -37,7 +40,11 @@ var portAddCmd = &cobra.Command{
 		if len(args) == 2 {
 			label = args[1]
 		}
-		return portAdd(port, proto, label, portAddRestrict)
+		kind := state.KindDocker
+		if portAddHost {
+			kind = state.KindHost
+		}
+		return portAdd(port, proto, label, kind, portAddRestrict)
 	},
 }
 
@@ -75,7 +82,7 @@ var portAllowCmd = &cobra.Command{
 
 var portRevokeCmd = &cobra.Command{
 	Use:   "revoke <PORT>/<PROTO> <IP>",
-	Short: "Revoke IP/CIDR for one port (re-opens to all if last specific IP)",
+	Short: "Revoke IP/CIDR for one port",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := RequireAdmin(); err != nil {
@@ -100,6 +107,8 @@ var portListCmd = &cobra.Command{
 func init() {
 	portAddCmd.Flags().BoolVar(&portAddRestrict, "restrict", false,
 		"add port to state but DO NOT open in UFW — use 'port allow' to grant IPs")
+	portAddCmd.Flags().BoolVar(&portAddHost, "host", false,
+		"port belongs to a host service (sshd-like, INPUT chain). Default: docker-published (FORWARD chain).")
 	portCmd.AddCommand(portAddCmd, portRemoveCmd, portAllowCmd, portRevokeCmd, portListCmd)
 	rootCmd.AddCommand(portCmd)
 }
@@ -121,7 +130,75 @@ func parsePortProto(spec string) (int, string, error) {
 	return port, proto, nil
 }
 
-func portAdd(port int, proto, label string, restrict bool) error {
+// kindOf finds the Kind of a managed port in state. Returns KindHost when
+// the port is unknown (safest fallback: host rules touch INPUT only and
+// won't accidentally expose container traffic).
+func kindOf(st *state.State, port int, proto string) string {
+	for _, p := range st.ManagedPorts {
+		if p.Port == port && p.Proto == proto {
+			return p.EffectiveKind()
+		}
+	}
+	return state.KindHost
+}
+
+// --- kind-dispatching UFW wrappers ---
+//
+// Host ports (sshd-like) need INPUT rules (`ufw allow ...`). Docker-published
+// ports need FORWARD rules (`ufw route allow ...`) because dockerd DNATs the
+// traffic to the container and INPUT never sees it. Lsm tags each managed
+// port with a Kind at registration time so these helpers dispatch correctly.
+
+func kindAllow(kind string, port int, proto, label string) error {
+	if kind == state.KindDocker {
+		return ufw.RouteAllow(port, proto, label)
+	}
+	return ufw.Allow(port, proto, label)
+}
+
+func kindAllowFrom(kind, ip string, port int, proto, label string) error {
+	if kind == state.KindDocker {
+		return ufw.RouteAllowFrom(ip, port, proto, label)
+	}
+	return ufw.AllowFrom(ip, port, proto, label)
+}
+
+func kindDeleteAllow(kind string, port int, proto string) error {
+	if kind == state.KindDocker {
+		return ufw.RouteDeleteAllow(port, proto)
+	}
+	return ufw.DeleteAllow(port, proto)
+}
+
+func kindDeleteAllowFrom(kind, ip string, port int, proto string) error {
+	if kind == state.KindDocker {
+		return ufw.RouteDeleteAllowFrom(ip, port, proto)
+	}
+	return ufw.DeleteAllowFrom(ip, port, proto)
+}
+
+func kindAllowedSources(kind string, port int, proto string) []string {
+	if kind == state.KindDocker {
+		return ufw.RouteAllowedSources(port, proto)
+	}
+	return ufw.AllowedSources(port, proto)
+}
+
+func kindSpecificSources(kind string, port int, proto string) []string {
+	if kind == state.KindDocker {
+		return ufw.RouteSpecificSources(port, proto)
+	}
+	return ufw.SpecificSources(port, proto)
+}
+
+func kindIsOpenToAll(kind string, port int, proto string) bool {
+	if kind == state.KindDocker {
+		return ufw.IsRouteOpenToAll(port, proto)
+	}
+	return ufw.IsOpenToAll(port, proto)
+}
+
+func portAdd(port int, proto, label, kind string, restrict bool) error {
 	if !ufw.Installed() {
 		return fmt.Errorf("UFW não instalado")
 	}
@@ -129,27 +206,40 @@ func portAdd(port int, proto, label string, restrict bool) error {
 	if err != nil {
 		return err
 	}
-	added := st.AddPort(state.ManagedPort{Port: port, Proto: proto, Label: label})
+	// If port already exists, preserve its kind (avoid silently flipping a
+	// previously-host-tagged port to docker on re-run).
+	existingKind := ""
+	for _, p := range st.ManagedPorts {
+		if p.Port == port && p.Proto == proto {
+			existingKind = p.EffectiveKind()
+			break
+		}
+	}
+	if existingKind != "" {
+		kind = existingKind
+	}
+
+	added := st.AddPort(state.ManagedPort{Port: port, Proto: proto, Label: label, Kind: kind})
 	if added {
 		if err := st.Save(); err != nil {
 			return err
 		}
-		runner.Log("Porta %d/%s registada como '%s'.", port, proto, label)
+		runner.Log("Porta %d/%s registada como '%s' (kind=%s).", port, proto, label, kind)
 	} else {
-		runner.Log("Porta %d/%s já estava registada.", port, proto)
+		runner.Log("Porta %d/%s já estava registada (kind=%s).", port, proto, kind)
 	}
 	if restrict {
 		runner.Log("--restrict: NÃO abro nada. Usa 'lsm port allow %d/%s <IP>' para conceder acesso.", port, proto)
 		return nil
 	}
-	if ufw.IsOpenToAll(port, proto) || len(ufw.SpecificSources(port, proto)) > 0 {
-		runner.Log("UFW já tem regras para %d/%s — mantido.", port, proto)
+	if kindIsOpenToAll(kind, port, proto) || len(kindSpecificSources(kind, port, proto)) > 0 {
+		runner.Log("UFW já tem regras para %d/%s (kind=%s) — mantido.", port, proto, kind)
 		return nil
 	}
-	if err := ufw.Allow(port, proto, label); err != nil {
+	if err := kindAllow(kind, port, proto, label); err != nil {
 		return err
 	}
-	runner.Log("UFW: %d/%s aberta a TODOS.", port, proto)
+	runner.Log("UFW: %d/%s aberta a TODOS (kind=%s).", port, proto, kind)
 	return nil
 }
 
@@ -161,12 +251,12 @@ func portRemove(port int, proto string) error {
 	if err != nil {
 		return err
 	}
-	// Apaga todas as regras desta porta no UFW (Anywhere + cada IP específico).
-	if ufw.IsOpenToAll(port, proto) {
-		_ = ufw.DeleteAllow(port, proto)
+	kind := kindOf(st, port, proto)
+	if kindIsOpenToAll(kind, port, proto) {
+		_ = kindDeleteAllow(kind, port, proto)
 	}
-	for _, ip := range ufw.SpecificSources(port, proto) {
-		_ = ufw.DeleteAllowFrom(ip, port, proto)
+	for _, ip := range kindSpecificSources(kind, port, proto) {
+		_ = kindDeleteAllowFrom(kind, ip, port, proto)
 	}
 	if st.RemovePort(port, proto) {
 		if err := st.Save(); err != nil {
@@ -188,7 +278,8 @@ func portAllow(port int, proto, ip string) error {
 	if !st.HasPort(port, proto) {
 		return fmt.Errorf("porta %d/%s não está em state — corre 'lsm port add %d/%s' primeiro", port, proto, port, proto)
 	}
-	for _, src := range ufw.SpecificSources(port, proto) {
+	kind := kindOf(st, port, proto)
+	for _, src := range kindSpecificSources(kind, port, proto) {
 		if src == ip {
 			runner.Log("UFW: %d/%s já permite %s.", port, proto, ip)
 			return nil
@@ -201,11 +292,11 @@ func portAllow(port int, proto, ip string) error {
 			break
 		}
 	}
-	if err := ufw.AllowFrom(ip, port, proto, label); err != nil {
+	if err := kindAllowFrom(kind, ip, port, proto, label); err != nil {
 		return err
 	}
-	if ufw.IsOpenToAll(port, proto) {
-		_ = ufw.DeleteAllow(port, proto)
+	if kindIsOpenToAll(kind, port, proto) {
+		_ = kindDeleteAllow(kind, port, proto)
 		runner.Log("UFW: %d/%s — fechado a todos, restrito a IPs específicos.", port, proto)
 	}
 	runner.Log("UFW: %d/%s permite %s.", port, proto, ip)
@@ -216,22 +307,26 @@ func portRevoke(port int, proto, ip string) error {
 	if !ufw.Installed() {
 		return fmt.Errorf("UFW não instalado")
 	}
-	// Check if this revoke would leave SSH port without any rules → lockout risk.
+	st, err := state.Load(cfgFile)
+	if err != nil {
+		return err
+	}
+	kind := kindOf(st, port, proto)
 	remaining := 0
-	for _, src := range ufw.SpecificSources(port, proto) {
+	for _, src := range kindSpecificSources(kind, port, proto) {
 		if src != ip {
 			remaining++
 		}
 	}
-	willBeClosed := remaining == 0 && !ufw.IsOpenToAll(port, proto)
+	willBeClosed := remaining == 0 && !kindIsOpenToAll(kind, port, proto)
 	if willBeClosed && isSSHPort(port, proto) && !confirmCloseSSH(ip) {
 		return nil
 	}
-	if err := ufw.DeleteAllowFrom(ip, port, proto); err != nil {
+	if err := kindDeleteAllowFrom(kind, ip, port, proto); err != nil {
 		return err
 	}
 	runner.Log("UFW: %d/%s já não permite %s.", port, proto, ip)
-	if len(ufw.SpecificSources(port, proto)) == 0 && !ufw.IsOpenToAll(port, proto) {
+	if len(kindSpecificSources(kind, port, proto)) == 0 && !kindIsOpenToAll(kind, port, proto) {
 		runner.Log("UFW: %d/%s sem regras — porta fechada.", port, proto)
 	}
 	return nil
@@ -269,11 +364,12 @@ func confirmCloseSSH(ip string) bool {
 func portsLosingAllRules(st *state.State, ip string) []state.ManagedPort {
 	var out []state.ManagedPort
 	for _, p := range st.ManagedPorts {
-		if ufw.IsOpenToAll(p.Port, p.Proto) {
+		kind := p.EffectiveKind()
+		if kindIsOpenToAll(kind, p.Port, p.Proto) {
 			continue
 		}
 		remaining := 0
-		for _, src := range ufw.SpecificSources(p.Port, p.Proto) {
+		for _, src := range kindSpecificSources(kind, p.Port, p.Proto) {
 			if src != ip {
 				remaining++
 			}
@@ -295,22 +391,24 @@ func portList() error {
 		return nil
 	}
 	fmt.Println()
-	fmt.Println("PORT/PROTO   LABEL                ESTADO UFW")
-	fmt.Println("──────────────────────────────────────────────────────────")
+	fmt.Println("PORT/PROTO   KIND     LABEL                ESTADO UFW")
+	fmt.Println("───────────────────────────────────────────────────────────────────")
 	for _, p := range st.ManagedPorts {
-		state := "[sem regra]"
+		stateStr := "[sem regra]"
+		kind := p.EffectiveKind()
 		if ufw.Installed() {
-			srcs := ufw.AllowedSources(p.Port, p.Proto)
+			srcs := kindAllowedSources(kind, p.Port, p.Proto)
 			switch {
 			case len(srcs) == 0:
-				state = "[sem regra UFW]"
+				stateStr = "[sem regra UFW]"
 			case len(srcs) == 1 && srcs[0] == "Anywhere":
-				state = "ABERTA a todos"
+				stateStr = "ABERTA a todos"
 			default:
-				state = "restrita: " + strings.Join(srcs, ", ")
+				stateStr = "restrita: " + strings.Join(srcs, ", ")
 			}
 		}
-		fmt.Printf("%-12s %-20s %s\n", fmt.Sprintf("%d/%s", p.Port, p.Proto), p.Label, state)
+		fmt.Printf("%-12s %-8s %-20s %s\n",
+			fmt.Sprintf("%d/%s", p.Port, p.Proto), kind, p.Label, stateStr)
 	}
 	return nil
 }

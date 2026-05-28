@@ -97,11 +97,11 @@ sudo lsm
    patches primeiro). Se for preciso reboot, lsm pergunta e sai — re-corres
    depois e retoma daqui.
 2. **Wizard** pergunta valores: timezone (default `Etc/UTC`), hostname, SSH
-   user/port, docker rootless user, política `auto_open_ports`. Modules
-   baseline (firewall, ssh, sysctl, timesync, hostname, fail2ban, upgrades)
-   são sempre instalados; **só docker é opt-in**.
-3. **Passwords** dos users SSH e docker rootless são pedidas em runtime
-   (`stty -echo` + double-prompt). Não ficam em ficheiro.
+   user/port, política `auto_open_ports`. Modules baseline (firewall, ssh,
+   sysctl, timesync, hostname, fail2ban, upgrades) são sempre instalados;
+   **só docker é opt-in**.
+3. **Password** do user SSH é pedida em runtime (`stty -echo` +
+   double-prompt). Não fica em ficheiro.
 4. Corre módulos selecionados.
 5. Pergunta se quer **auto-launch** do menu no login do SSH user (escreve
    bloco em `~/.profile`).
@@ -213,9 +213,6 @@ ssh:
   port: 2210                     # alternativa à 22 reduz brute-force
   user: dev24                    # password pedida ao criar user
 
-docker:
-  rootless_user: docker24        # password pedida ao criar user
-
 network:
   # Política para módulos que precisam de abrir portas em UFW:
   #   ask   → pergunta caso a caso (recomendado)
@@ -249,11 +246,11 @@ modules:
 | `lsm status [--live]` | CPU / RAM / disk / network. `--live` faz refresh 2s |
 | `lsm system update` | apt update + upgrade + autoremove (sem restart inline; pergunta reboot) |
 | `lsm system reboot` | Reboot agora / agendar 04:00 / adiar |
-| `lsm port add P/PROTO [LABEL]` | Registar + abrir porta (`--restrict` para abrir fechada) |
+| `lsm port add P/PROTO [LABEL]` | Registar + abrir porta. Default kind=docker (`ufw route allow`); `--host` para serviço host (`ufw allow`); `--restrict` regista sem abrir |
 | `lsm port remove P/PROTO` | Fechar + remover de state |
-| `lsm port allow P/PROTO IP` | ALLOW from IP só nessa porta |
+| `lsm port allow P/PROTO IP` | ALLOW from IP só nessa porta (chain dispatched by kind) |
 | `lsm port revoke P/PROTO IP` | DELETE allow from IP só nessa porta |
-| `lsm port list` | Tabela: portas geridas + sources UFW |
+| `lsm port list` | Tabela: portas geridas, kind, sources UFW |
 | `lsm add-ip [IP]` | Atalho: ALLOW from IP em **todas** portas geridas |
 | `lsm remove-ip [IP]` | Atalho: DELETE em todas portas geridas |
 
@@ -263,7 +260,7 @@ modules:
 |---|---|
 | `lsm firewall` | UFW: install, defaults deny/allow, abre 22 (bootstrap só na 1ª vez) |
 | `lsm ssh` | Cria user (pede password), drop-in `sshd_config.d/99-lsm.conf`, abre porta UFW |
-| `lsm docker` | Instala Docker CE, dependências rootless (slirp4netns, fuse-overlayfs, systemd-container), cria user (pede password), `dockerd-rootless-setuptool.sh install` |
+| `lsm docker` | Instala Docker CE (engine + cli + containerd + buildx + compose plugin) e `systemctl enable --now docker.service`. Daemon corre como root. |
 | `lsm fail2ban` | jail.local com `port=ssh.port` + ignoreip lido do UFW |
 | `lsm upgrades` | unattended-upgrades + periodic config |
 | `lsm timesync` | systemd-timesyncd + timezone |
@@ -301,7 +298,10 @@ filtra por subcmd em-app. Operações destrutivas precisam de root login
 - `default deny incoming / allow outgoing`.
 - Abre porta 22 (bootstrap, evita lockout antes do SSH module mudar a porta).
 - Ativa UFW.
-- **Idempotente**: re-correr não duplica regras.
+- Escreve bloco marcado **DOCKER-USER** em `/etc/ufw/after.rules` para que
+  portas docker-publicadas respeitem regras UFW (sem isto, `docker run -p`
+  bypassa o firewall). `ufw reload` aplica.
+- **Idempotente**: re-correr não duplica regras nem o bloco DOCKER-USER.
 
 ### ssh
 - Cria user (`ssh.user`) + pede password em runtime se ainda não existir.
@@ -324,11 +324,9 @@ filtra por subcmd em-app. Operações destrutivas precisam de root login
 ### docker
 - Skip `RemoveConflicts` se docker já instalado (evita destruir engine ativo).
 - Caso contrário remove `docker.io`, `podman`, `runc` (não toca em docker-ce*).
-- Instala Docker CE oficial via repo apt + `slirp4netns` + `fuse-overlayfs` + `systemd-container`.
-- Cria user `docker.rootless_user` + pede password em runtime se ainda não existir.
-- subuid/subgid + `loginctl enable-linger`.
-- `dockerd-rootless-setuptool.sh install` via `machinectl shell <user>@`.
-- Desativa Docker rootful (`docker.service` + `docker.socket`).
+- Instala Docker CE oficial via repo apt: `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`.
+- `systemctl enable --now docker.service` — daemon rootful, socket em `/var/run/docker.sock` (só root).
+- **Não** cria user dedicado nem adiciona ninguém ao grupo `docker` (= root). Containers correm via root login / `sudo -i`.
 
 ### fail2ban
 - `apt install fail2ban`.
@@ -407,51 +405,54 @@ sudo lsm remove-ip 1.2.3.4
 
 ---
 
-## Containers (docker rootless)
+## Containers (docker rootful)
 
-`docker.rootless_user` (default `docker24`) é o **único** user com acesso ao
-daemon docker. dev24 (operator) **não** corre containers — design intencional.
+Daemon docker corre como root, socket em `/var/run/docker.sock` (só root tem
+acesso). dev24 (operator) **não** corre containers — único caminho é root
+login (console / IPMI / `su -`).
 
-Para correr containers, três caminhos:
-
-### 1. Como root, escalando para o user (scripts)
-
-```bash
-sudo -iu docker24 docker run hello-world
-sudo -iu docker24 docker compose -f /home/docker24/stacks/app/compose.yaml up -d
-```
-
-`sudo -i` cria login shell, dispara user systemd manager, popula
-`XDG_RUNTIME_DIR` — `docker` cliente encontra socket sem mais nada.
-
-### 2. SSH directo como docker24 (interactivo)
-
-A partir desta versão, `lsm docker` pede password ao criar o user, pelo que
-podes fazer login directo:
+### Caminho típico
 
 ```bash
-ssh -p 2210 docker24@<servidor>
+sudo -i                                    # ou root login direto
 docker run hello-world
+docker compose -f /root/stacks/app/compose.yaml up -d
 ```
 
-(Servidor antigo onde docker24 ficou sem password? `sudo passwd docker24` arranja.)
+### Expor porta de container
 
-### 3. `su -` a partir de root
+Docker rootful escreve regras directamente em iptables, normalmente
+**bypassing** UFW. Para que `lsm port` se aplique a containers, `lsm
+firewall` instala um bloco DOCKER-USER em `/etc/ufw/after.rules`:
+
+```
+DOCKER-USER → ufw-user-forward (regras "ufw route allow ...")
+              private LAN (10/8, 172.16/12, 192.168/16) → RETURN
+              tudo o resto                              → DROP
+```
+
+Resultado: container que faz `-p 5432:5432` está **fechado** ao mundo
+até dares regra explícita.
+
+Fluxo típico:
 
 ```bash
-su - docker24
-docker ps
+docker run -d -p 5432:5432 postgres:16
+# (porta fechada ao mundo — DOCKER-USER DROP por defeito)
+
+sudo lsm port add 5432/tcp postgres           # kind=docker (default)
+sudo lsm port allow 5432/tcp 1.2.3.4          # só 1.2.3.4 entra
 ```
 
 ### Pitfalls
 
-- `sudo docker` plain **falha**: `DOCKER_HOST` default aponta a
-  `/var/run/docker.sock` (rootful) que está desativado. Tem de ser via login
-  do docker user OU `DOCKER_HOST=unix:///run/user/$(id -u docker24)/docker.sock`
-  no env.
-- Para expor porta do container ao mundo: `sudo lsm port add 3306/tcp "MySQL"`
-  e depois `lsm port allow 3306/tcp <IP>` para restringir.
-- Compose files vivem tipicamente em `/home/docker24/stacks/<app>/compose.yaml`.
+- **Não** adiciones users ao grupo `docker`. É equivalente a root sem audit
+  trail. Se um operador precisa de docker, dá-lhe root login mesmo.
+- Para serviço **host** (não-container) que escuta no host, usa
+  `sudo lsm port add 8080/tcp "label" --host` para criar regra INPUT em vez
+  de FORWARD.
+- Compose files vivem tipicamente em `/root/stacks/<app>/compose.yaml`
+  (ou `/opt/stacks/`).
 
 ---
 
@@ -478,9 +479,8 @@ Config: /etc/lsm/config.yaml
   [OK  ] sshd Port = 2210
   [OK  ] sshd PermitRootLogin no
   [OK  ] UFW allows SSH port 2210/tcp
-  [OK  ] user 'docker24' exists
-  [OK  ] subuid configured — docker24:165536:65536
   [OK  ] Docker engine present
+  [OK  ] docker.service active
   [OK  ] UFW allows 2210/tcp (SSH)
   [OK  ] fail2ban installed
   [OK  ] fail2ban active
@@ -516,7 +516,7 @@ sudo apt install -y ./lsm_${ARCH}.deb
 sudo lsm
 # Passos automáticos:
 # - apt update + upgrade (se reboot needed → prompt, lsm sai, reentras depois)
-# - wizard pergunta config + password do dev24 + password do docker24
+# - wizard pergunta config + password do dev24
 # - corre módulos baseline + docker (se opt-in)
 # - oferece auto-launch do menu no login do dev24
 
@@ -558,8 +558,8 @@ sudo lsm validate   # confirma
 ### Correr containers
 
 ```bash
-sudo -iu docker24 docker run hello-world
-# ou ssh directo como docker24, ou su - docker24
+sudo -i
+docker run hello-world
 ```
 
 ---
@@ -609,12 +609,10 @@ EOF
 **`unattended-upgrade` não corre automaticamente**
 Verifica timer: `systemctl status apt-daily.timer apt-daily-upgrade.timer`.
 
-**Docker rootless falha "One of slirp4netns ... needs to be installed"**
-Faltam runtime deps em Debian minimal:
-```bash
-sudo apt install -y slirp4netns fuse-overlayfs systemd-container
-sudo lsm docker
-```
+**`docker.service` falha após install**
+Verifica `journalctl -u docker.service -n 50`. Causas comuns: iptables
+legacy ausente, kernel sem cgroup v2, conflito com pacote antigo do
+distro. Re-correr `sudo lsm docker` re-instala via repo oficial.
 
 **Config corrompido**
 ```bash

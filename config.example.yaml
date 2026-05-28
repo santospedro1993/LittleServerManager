@@ -20,10 +20,6 @@ ssh:
   # nothing is stored on disk.
   user: dev24
 
-docker:
-  # Dedicated user that runs containers in rootless mode.
-  rootless_user: docker24
-
 network:
   # Policy for modules that need to open UFW ports:
   #   ask   → prompt each time (recommended)

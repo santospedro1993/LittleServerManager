@@ -53,7 +53,7 @@ var sshCmd = &cobra.Command{
 			if err := sshmod.OpenFirewall(cfg.SSH.Port); err != nil {
 				return err
 			}
-			if st.AddPort(state.ManagedPort{Port: cfg.SSH.Port, Proto: "tcp", Label: "SSH"}) {
+			if st.AddPort(state.ManagedPort{Port: cfg.SSH.Port, Proto: "tcp", Label: "SSH", Kind: state.KindHost}) {
 				if err := st.Save(); err != nil {
 					return err
 				}

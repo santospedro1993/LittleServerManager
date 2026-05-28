@@ -7,10 +7,35 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// PortKind classifies a managed port so the firewall layer knows which
+// chain the rule belongs to:
+//
+//   - "host" — service listening on the host itself (sshd). UFW INPUT chain.
+//   - "docker" — port published by a docker container (`docker run -p ...`).
+//     Docker DNATs to the container, so the traffic hits FORWARD via the
+//     DOCKER-USER chain and INPUT-targeted UFW rules don't apply. Uses
+//     `ufw route allow ...` (FORWARD).
+const (
+	KindHost   = "host"
+	KindDocker = "docker"
+)
+
 type ManagedPort struct {
 	Port  int    `yaml:"port"`
 	Proto string `yaml:"proto"`
 	Label string `yaml:"label"`
+	// Kind is "host" or "docker". Empty values from old state files are
+	// treated as host by the firewall layer (back-compat: pre-Kind ports
+	// were all host-listening services like sshd).
+	Kind string `yaml:"kind,omitempty"`
+}
+
+// EffectiveKind returns Kind with the empty-string fallback applied.
+func (p ManagedPort) EffectiveKind() string {
+	if p.Kind == "" {
+		return KindHost
+	}
+	return p.Kind
 }
 
 type State struct {

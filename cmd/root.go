@@ -22,7 +22,7 @@ var rootCmd = &cobra.Command{
 	Use:   "lsm",
 	Short: "Linux Server Manager — base setup + ops",
 	Long: `lsm provisions and manages a Debian server: firewall, SSH hardening,
-Docker rootless, fail2ban, unattended-upgrades, timesync, sysctl, hostname.
+Docker engine, fail2ban, unattended-upgrades, timesync, sysctl, hostname.
 Run without args for the interactive menu.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		runner.DryRun = dryRun

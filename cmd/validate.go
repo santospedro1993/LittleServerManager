@@ -92,6 +92,10 @@ func runValidate() (failedModules []string, fail int, err error) {
 		if ufw.Installed() {
 			check("UFW active", ufw.IsActive(), "")
 		}
+		// DOCKER-USER block in after.rules is what makes UFW rules apply
+		// to docker-published ports. Without it, `docker run -p` bypasses
+		// the firewall entirely.
+		check("after.rules DOCKER-USER block present", ufw.HasAfterRulesDockerBlock(), "")
 	} else {
 		skip("firewall", "not installed by lsm")
 	}
@@ -128,14 +132,11 @@ func runValidate() (failedModules []string, fail int, err error) {
 	// --- Docker ---
 	currentModule = "docker"
 	if st.IsInstalled("docker") {
-		if _, err := user.Lookup(cfg.Docker.RootlessUser); err == nil {
-			check(fmt.Sprintf("user '%s' exists", cfg.Docker.RootlessUser), true, "")
-		} else {
-			check(fmt.Sprintf("user '%s' exists", cfg.Docker.RootlessUser), false, err.Error())
-		}
-		subuid, _ := runner.Capture("grep", fmt.Sprintf("^%s:", cfg.Docker.RootlessUser), "/etc/subuid")
-		check("subuid configured", strings.TrimSpace(subuid) != "", strings.TrimSpace(subuid))
 		check("Docker engine present", runner.HasCommand("docker"), "")
+		if runner.HasCommand("docker") {
+			out, _ := runner.Capture("systemctl", "is-active", "docker.service")
+			check("docker.service active", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
+		}
 	} else {
 		skip("docker", "not installed by lsm")
 	}
@@ -149,8 +150,13 @@ func runValidate() (failedModules []string, fail int, err error) {
 	if ufw.Installed() {
 		for _, p := range st.ManagedPorts {
 			currentModule = portOwnerModule(p.Port, p.Proto, cfg)
-			check(fmt.Sprintf("UFW allows %d/%s (%s)", p.Port, p.Proto, p.Label),
-				ufw.PortPermitted(p.Port, p.Proto), "")
+			kind := p.EffectiveKind()
+			// "Permitted" means: has at least one ALLOW rule (Anywhere or
+			// from-IP) on the right chain for this port's kind.
+			permitted := kindIsOpenToAll(kind, p.Port, p.Proto) ||
+				len(kindSpecificSources(kind, p.Port, p.Proto)) > 0
+			check(fmt.Sprintf("UFW allows %d/%s (%s, kind=%s)", p.Port, p.Proto, p.Label, kind),
+				permitted, "")
 		}
 		currentModule = ""
 	}

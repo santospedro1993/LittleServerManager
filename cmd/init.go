@@ -126,12 +126,6 @@ func runWizard() error {
 	c.SSH.Port = prompt.AskInt("SSH port", 2210)
 
 	fmt.Println()
-	fmt.Println("─── Docker ───────────────────────────────────")
-	fmt.Println("Dedicated user that runs containers in rootless mode.")
-	fmt.Println("Containers run as this user, not root.")
-	c.Docker.RootlessUser = askValidNewUser("Docker rootless user", "docker24")
-
-	fmt.Println()
 	fmt.Println("─── UFW open-port policy ─────────────────────")
 	fmt.Println("When a module needs to open a firewall port:")
 	fmt.Println("  ask   → prompt each time (safer, recommended)")
@@ -160,7 +154,7 @@ func runWizard() error {
 	c.Modules.Upgrades = true
 
 	// Opt-in modules (ask one by one — extend this block when adding new ones).
-	c.Modules.Docker = prompt.Confirm("Install docker (engine + rootless user)?", true)
+	c.Modules.Docker = prompt.Confirm("Install docker engine (rootful daemon)?", true)
 
 	c.SetPath(cfgFile)
 	if err := os.MkdirAll(filepath.Dir(cfgFile), 0755); err != nil {

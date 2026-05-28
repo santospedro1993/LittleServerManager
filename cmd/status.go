@@ -26,8 +26,8 @@ every 2 seconds (Ctrl+C to exit).
 
 Operator-class command: dev24 can run it via 'sudo lsm status'.
 
-TODO (post-MVP): per-container view of the same metrics for the
-rootless docker user (cgroup v2 + docker stats).`,
+TODO (post-MVP): per-container view of the same metrics
+(cgroup v2 + docker stats).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := runner.RequireRoot(); err != nil {
 			return err

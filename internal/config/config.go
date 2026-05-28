@@ -22,7 +22,6 @@ type Config struct {
 	Hostname      string        `yaml:"hostname,omitempty"`
 	FQDN          string        `yaml:"fqdn,omitempty"`
 	SSH           SSHConfig     `yaml:"ssh"`
-	Docker        DockerConfig  `yaml:"docker"`
 	Network       NetworkConfig `yaml:"network"`
 	Modules       ModulesConfig `yaml:"modules"`
 
@@ -47,10 +46,6 @@ type ModulesConfig struct {
 type SSHConfig struct {
 	Port int    `yaml:"port"`
 	User string `yaml:"user"`
-}
-
-type DockerConfig struct {
-	RootlessUser string `yaml:"rootless_user"`
 }
 
 type NetworkConfig struct {
@@ -85,9 +80,6 @@ func (c *Config) validate() error {
 	}
 	if c.SSH.User == "" {
 		return fmt.Errorf("config: ssh.user required")
-	}
-	if c.Docker.RootlessUser == "" {
-		return fmt.Errorf("config: docker.rootless_user required")
 	}
 	if c.Network.AutoOpenPorts == "" {
 		c.Network.AutoOpenPorts = "ask"

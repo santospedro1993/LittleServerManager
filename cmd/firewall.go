@@ -43,6 +43,26 @@ var firewallCmd = &cobra.Command{
 		if err := ufw.Enable(); err != nil {
 			return err
 		}
+
+		// DOCKER-USER patch in after.rules. This is what makes `lsm port`
+		// rules apply to docker-published ports — without it, `docker run
+		// -p` bypasses UFW entirely. We install the block unconditionally
+		// (cheap, idempotent, harmless on hosts without docker because the
+		// DOCKER-USER chain only exists when dockerd is running).
+		runner.Section("UFW: DOCKER-USER block (after.rules)")
+		alreadyPresent := ufw.HasAfterRulesDockerBlock()
+		if err := ufw.WriteAfterRulesDockerBlock(); err != nil {
+			return err
+		}
+		if alreadyPresent {
+			runner.Log("after.rules: DOCKER-USER block already present.")
+		} else {
+			runner.Log("after.rules: DOCKER-USER block written.")
+		}
+		if err := ufw.Reload(); err != nil {
+			return err
+		}
+
 		markInstalled("firewall")
 		return nil
 	},

@@ -11,7 +11,6 @@ import (
 	sshmod "lsm/internal/ssh"
 	"lsm/internal/state"
 	"lsm/internal/sysupdate"
-	"lsm/internal/ufw"
 )
 
 // runMenu drives the interactive flow when lsm is invoked with no subcommand.
@@ -382,8 +381,16 @@ func interactivePortAdd() error {
 		return err
 	}
 	label := prompt.Ask("Label", spec)
+	kindIdx := prompt.Choose("Kind?", []string{
+		"docker — published by a container (FORWARD chain)",
+		"host   — service listening on the host (INPUT chain)",
+	})
+	kind := state.KindDocker
+	if kindIdx == 2 {
+		kind = state.KindHost
+	}
 	restrict := prompt.Confirm("Add closed (no Anywhere rule), grant per-IP later?", false)
-	return portAdd(port, proto, label, restrict)
+	return portAdd(port, proto, label, kind, restrict)
 }
 
 func interactivePortRemove() error {
@@ -414,7 +421,12 @@ func interactivePortRevoke() error {
 	if !ok {
 		return nil
 	}
-	srcs := ufw.SpecificSources(port, proto)
+	st, err := state.Load(cfgFile)
+	if err != nil {
+		return err
+	}
+	kind := kindOf(st, port, proto)
+	srcs := kindSpecificSources(kind, port, proto)
 	if len(srcs) == 0 {
 		fmt.Println("No specific IPs — port is open to all or has no rules.")
 		return nil
@@ -481,12 +493,13 @@ func showOverview() error {
 		fmt.Println("  (none — run modules first)")
 	} else {
 		for _, p := range st.ManagedPorts {
-			srcs := ufw.AllowedSources(p.Port, p.Proto)
+			kind := p.EffectiveKind()
+			srcs := kindAllowedSources(kind, p.Port, p.Proto)
 			if len(srcs) == 0 {
-				fmt.Printf("  - %d/%s  %s — [no UFW rule]\n", p.Port, p.Proto, p.Label)
+				fmt.Printf("  - %d/%s [%s]  %s — [no UFW rule]\n", p.Port, p.Proto, kind, p.Label)
 				continue
 			}
-			fmt.Printf("  - %d/%s  %s\n", p.Port, p.Proto, p.Label)
+			fmt.Printf("  - %d/%s [%s]  %s\n", p.Port, p.Proto, kind, p.Label)
 			for _, s := range srcs {
 				if s == "Anywhere" {
 					fmt.Printf("      • Anywhere (open to all)\n")

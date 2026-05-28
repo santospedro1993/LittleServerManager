@@ -67,7 +67,8 @@ func init() {
 }
 
 // currentWhitelist returns the union of specific IPs/CIDRs allowed on managed
-// ports per UFW. Source of truth: the firewall itself, not config.
+// ports per UFW. Source of truth: the firewall itself, not config. Reads from
+// both INPUT and FORWARD chains depending on each port's Kind.
 func currentWhitelist() []string {
 	if !ufw.Installed() {
 		return nil
@@ -79,7 +80,7 @@ func currentWhitelist() []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, p := range st.ManagedPorts {
-		for _, src := range ufw.SpecificSources(p.Port, p.Proto) {
+		for _, src := range kindSpecificSources(p.EffectiveKind(), p.Port, p.Proto) {
 			if !seen[src] {
 				seen[src] = true
 				out = append(out, src)
@@ -103,9 +104,9 @@ func addIP(ip string) error {
 	}
 
 	for _, p := range st.ManagedPorts {
-		// Skip se já existe ALLOW from <ip>.
+		kind := p.EffectiveKind()
 		already := false
-		for _, src := range ufw.SpecificSources(p.Port, p.Proto) {
+		for _, src := range kindSpecificSources(kind, p.Port, p.Proto) {
 			if src == ip {
 				already = true
 				break
@@ -116,12 +117,11 @@ func addIP(ip string) error {
 			continue
 		}
 		label := fmt.Sprintf("%s - %s", p.Label, ip)
-		if err := ufw.AllowFrom(ip, p.Port, p.Proto, label); err != nil {
+		if err := kindAllowFrom(kind, ip, p.Port, p.Proto, label); err != nil {
 			return fmt.Errorf("ufw allow %s %d/%s: %w", ip, p.Port, p.Proto, err)
 		}
-		// Se a porta tinha "Anywhere", remove-a — passou a estar restrita.
-		if ufw.IsOpenToAll(p.Port, p.Proto) {
-			_ = ufw.DeleteAllow(p.Port, p.Proto)
+		if kindIsOpenToAll(kind, p.Port, p.Proto) {
+			_ = kindDeleteAllow(kind, p.Port, p.Proto)
 			runner.Log("UFW: %d/%s — fechado a todos, restrito a IPs específicos.", p.Port, p.Proto)
 		}
 	}
@@ -138,9 +138,6 @@ func removeIP(ip string) error {
 		return err
 	}
 
-	// Pre-flight: if any port loses all rules AND one of those is SSH, confirm
-	// before proceeding. Aborts the whole batch on a "no" so we don't leave
-	// the firewall in a half-revoked state.
 	closing := portsLosingAllRules(st, ip)
 	sshClosing := false
 	for _, p := range closing {
@@ -154,10 +151,11 @@ func removeIP(ip string) error {
 	}
 
 	for _, p := range st.ManagedPorts {
-		if err := ufw.DeleteAllowFrom(ip, p.Port, p.Proto); err != nil {
+		kind := p.EffectiveKind()
+		if err := kindDeleteAllowFrom(kind, ip, p.Port, p.Proto); err != nil {
 			runner.Log("UFW: delete %d/%s from %s failed (ignored): %v", p.Port, p.Proto, ip, err)
 		}
-		if len(ufw.SpecificSources(p.Port, p.Proto)) == 0 && !ufw.IsOpenToAll(p.Port, p.Proto) {
+		if len(kindSpecificSources(kind, p.Port, p.Proto)) == 0 && !kindIsOpenToAll(kind, p.Port, p.Proto) {
 			runner.Log("UFW: %d/%s sem regras — porta fechada.", p.Port, p.Proto)
 		}
 	}

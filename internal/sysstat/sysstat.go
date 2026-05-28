@@ -3,8 +3,8 @@
 // throughput. It deliberately uses no external dependencies — everything
 // comes from /proc and a couple of shell-outs (df).
 //
-// Future extension (tracked as a TODO): per-container equivalents for
-// rootless docker, reading from cgroup v2 + the user's docker socket.
+// Future extension (tracked as a TODO): per-container equivalents
+// reading from cgroup v2 + the docker socket.
 package sysstat
 
 import (

@@ -19,8 +19,8 @@ bash dispersos por:
 - Estado em ficheiro YAML, sincronizado com UFW.
 - Distribuído como `.deb` via GitHub Actions.
 
-**Foco:** servidor Debian para correr containers (Docker rootless) + acesso
-controlado por whitelist de IPs.
+**Foco:** servidor Debian para correr containers (Docker engine rootful) +
+acesso controlado por whitelist de IPs.
 
 ---
 
@@ -88,7 +88,7 @@ lsm/
 │   ├── ip.go                  # add-ip / remove-ip + sync UFW
 │   ├── firewall.go            # UFW bootstrap (idempotente)
 │   ├── ssh.go                 # user + harden + open port + state register
-│   ├── docker.go              # install + rootless
+│   ├── docker.go              # install engine + enable daemon
 │   ├── fail2ban.go            # jail.local
 │   ├── upgrades.go            # unattended-upgrades
 │   ├── timesync.go            # parent + sub-cmds: sync, status
@@ -101,7 +101,7 @@ lsm/
     ├── runner/runner.go       # Run, Capture, Stdin, DryRun, RequireRoot
     ├── ufw/ufw.go             # Install, Allow*, Delete*, OpenWhitelisted
     ├── ssh/ssh.go             # CreateUser, Harden, OpenFirewall
-    ├── docker/docker.go       # RemoveConflicts, InstallRepo, InstallEngine, SetupRootlessUser
+    ├── docker/docker.go       # RemoveConflicts, InstallRepo, InstallEngine, EnableDaemon
     ├── fail2ban/fail2ban.go   # Install, WriteJailConfig, Enable
     ├── upgrades/upgrades.go   # Install, EnablePeriodic
     ├── timesync/timesync.go   # SetTimezone, Enable, ForceSync, Synced, NTPEnabled
@@ -125,9 +125,6 @@ fqdn: srv01.exemplo.com          # opcional
 ssh:
   port: 2210                     # required
   user: dev24                    # required (password pedida em runtime)
-
-docker:
-  rootless_user: docker24        # required
 
 network:
   auto_open_ports: ask           # true | false | ask
@@ -161,7 +158,10 @@ devolve `State{}` vazio e o primeiro `Save()` cria-o.
 
 ```yaml
 managed_ports:
-  - {port: 2210, proto: tcp, label: SSH}
+  # kind: "host" (sshd-like, INPUT chain) or "docker" (container-published,
+  # FORWARD chain). Empty kind in legacy files is treated as host.
+  - {port: 2210, proto: tcp, label: SSH, kind: host}
+  - {port: 5432, proto: tcp, label: postgres, kind: docker}
 
 # Módulos que correram com sucesso ao menos uma vez.
 # Usado por `validate` para decidir o que avaliar e pelo menu para mostrar
@@ -249,7 +249,7 @@ Sequência quando `sudo lsm` corre e `/etc/lsm/config.yaml` não existe
 2. Se há reboot pendente → prompt 3-way (now / 04:00 / defer). Em
    qualquer escolha, lsm sai. Re-correr depois retoma daqui.
 3. Wizard (timezone — default `Etc/UTC` —, hostname, ssh user/port,
-   docker user, política `auto_open_ports`, **só docker como opt-in**).
+   política `auto_open_ports`, **só docker como opt-in**).
    firewall + ssh + sysctl + timesync + fail2ban + upgrades são baseline
    incondicional (`true`). hostname é baseline **condicional**: a flag é
    `c.Hostname != ""` — se o user deixou o hostname vazio no wizard, o
@@ -265,12 +265,12 @@ em bootstrap.
 
 | # | Cmd | O que faz | Lê do config |
 |---|---|---|---|
-| 1 | `firewall` | Install UFW, defaults deny/allow, abre 22 (bootstrap), enable | — |
+| 1 | `firewall` | Install UFW, defaults deny/allow, abre 22 (bootstrap), enable, escreve bloco DOCKER-USER em `/etc/ufw/after.rules` + `ufw reload` | — |
 | 2 | `timesync` | `set-timezone` + `set-ntp true` + enable timesyncd | `timezone` |
 | 3 | `sysctl` | Escreve `/etc/sysctl.d/99-lsm.conf` + `sysctl --system` | — (hardcoded) |
 | 4 | `hostname` | `hostnamectl` + atualiza `/etc/hosts` | `hostname`, `fqdn` (skip se vazio) |
 | 5 | `ssh` | Cria user **fora do grupo sudo** (operator-only), grava `/etc/sudoers.d/lsm` com NOPASSWD em `/usr/sbin/lsm` (gate é em-app via `RequireAdmin`), hardening via drop-in `/etc/ssh/sshd_config.d/99-lsm.conf` validado com `sshd -t`, abre porta UFW (1ª vez = a todos), regista state | `ssh.user`, `ssh.port`, `network.auto_open_ports` |
-| 6 | `docker` | Remove conflitos, install Docker CE, rootless setup user dedicado | `docker.rootless_user` |
+| 6 | `docker` | Remove conflitos, install Docker CE (engine + cli + containerd + buildx + compose plugin), `systemctl enable --now docker.service` | — |
 | 7 | `fail2ban` | Install, escreve `jail.local` (port=ssh.port, ignoreip = `ufw.SpecificSources` da porta SSH) | `ssh.port` |
 | 8 | `upgrades` | Install + escreve `20auto-upgrades` + enable service | — |
 
@@ -357,73 +357,103 @@ parent). `b`/`back`/`q`/`quit`/`exit` são aliases. Validate fundiu-se com
 "Check & Fix": uma só entrada que mostra o report e, se houver FAILs e
 caller for admin, oferece re-correr os módulos com falha.
 
-## 10c. Como correr containers (docker rootless)
+## 10c. Como correr containers (docker rootful)
 
-`cfg.Docker.RootlessUser` (default `docker24`) é o **único** user que tem
-acesso ao daemon docker. Socket vive em `/run/user/<uid>/docker.sock`,
-visível apenas dentro da sessão login desse user (systemd-logind seta
-`XDG_RUNTIME_DIR`).
+Daemon docker corre como root no socket default `/var/run/docker.sock`.
+Apenas root tem acesso (não adicionamos users ao grupo `docker` — equivale
+a root, melhor não dar isso a operadores).
 
-dev24 (operator) **não** corre containers — design intencional, isola
-admin de workloads. Para correr docker, três caminhos:
+Caminho único: login como root (ou `sudo -i`) e correr `docker` directo.
 
-1. **Como root, escalando para docker24** (recomendado p/ scripts):
-   ```bash
-   sudo -iu docker24 docker run hello-world
-   sudo -iu docker24 docker compose up -d
-   ```
-   `sudo -i` cria login shell, dispara o systemd user manager, popula
-   `XDG_RUNTIME_DIR` — `docker` cliente encontra socket sem mais nada.
+```bash
+sudo -i                           # ou login como root direto
+docker run hello-world
+docker compose -f /root/stacks/app/compose.yaml up -d
+```
 
-2. **SSH directo como docker24** (recomendado p/ uso interactivo):
-   - Ativar via `sudo passwd docker24` (lsm já pede password ao criar
-     user a partir desta versão; servidores antigos podem ter user
-     criado sem password — `passwd` resolve).
-   - Ou deploy de SSH key em `/home/docker24/.ssh/authorized_keys`.
-   - Login: `ssh -p 2210 docker24@<servidor>`.
-   - Após login: `docker run …` directo.
-
-3. **`su - docker24` a partir de root**:
-   ```bash
-   su - docker24
-   docker ps
-   ```
-   Equivalente ao `sudo -iu`.
+dev24 (operator) **não** corre containers. Único caminho de privilégio
+para containers é root login (cloud console / IPMI / `su -`). Mantém
+admin/operator separados de workloads.
 
 Notas:
-- `sudo docker` como root **falha** (DOCKER_HOST default aponta a
-  `/var/run/docker.sock` que está desativado). Tem de ser via login do
-  docker24 OU `DOCKER_HOST=unix:///run/user/$(id -u docker24)/docker.sock`
-  no env.
-- `docker compose` segue o mesmo padrão. Compose files podem viver em
-  `/home/docker24/stacks/<app>/compose.yaml`.
-- Para abrir porta de container ao mundo: `lsm port add <PORT>/tcp <LABEL>`
-  (root). Whitelist por IP via `lsm port allow ...`.
+- Compose files vivem em `/root/stacks/<app>/compose.yaml` (ou
+  `/opt/stacks/<app>/`, sem preferência forte).
+- **Portas docker são FECHADAS por defeito.** O bloco DOCKER-USER que
+  `lsm firewall` mete em `/etc/ufw/after.rules` faz com que `docker run -p`
+  não exponha nada ao mundo sem regra UFW correspondente.
+- Para expor porta de container: `lsm port add <PORT>/tcp <LABEL>` (default
+  kind=docker → `ufw route allow`). Whitelist por IP via
+  `lsm port allow <PORT>/tcp <IP>`.
+- **Não** dar acesso ao grupo `docker` a users não-root — é equivalente a
+  root sem audit trail.
 
 ## 11. Semântica da whitelist de IPs
 
 **Source of truth = UFW**. Config NÃO armazena IPs. Operações lêem `ufw status`
 e modificam regras direto.
 
-Estado da porta gerida pode ser:
-- **Aberta a todos** → `ALLOW Anywhere` no UFW (sem regras `from`).
-- **Restrita** → uma ou mais regras `ALLOW from <ip> to any port P proto T`,
-  e SEM regra `Anywhere` em paralelo.
+### Kinds de porta gerida
+
+Cada `ManagedPort` em `state.yaml` tem um `kind` que decide em que chain
+iptables a regra entra:
+
+| Kind | Chain UFW | Cobre | Comando UFW |
+|---|---|---|---|
+| `host` | INPUT (`ufw-user-input`) | Serviços a escutar no host (sshd) | `ufw allow ...` |
+| `docker` | FORWARD (`ufw-user-forward` via `DOCKER-USER`) | Portas publicadas por containers (`docker run -p`) | `ufw route allow ...` |
+
+`lsm port add P/T LABEL` default = `docker` (caso comum: expor container).
+`--host` flag para serviços host. Módulos (ssh) registam com kind=host explícito.
+
+Estado de uma porta gerida pode ser:
+- **Aberta a todos** → `ALLOW Anywhere` (host) ou `ALLOW FWD Anywhere` (docker).
+- **Restrita** → uma ou mais regras `from <ip> to any port P proto T` (no
+  chain certo), SEM regra Anywhere em paralelo.
+
+### DOCKER-USER patch
+
+Docker rootful escreve regras em `DOCKER-USER` (filter) + `DOCKER` (nat)
+quando publica porta. Tráfego docker passa por FORWARD, não INPUT.
+**Sem intervenção, UFW INPUT-only não tem efeito sobre containers.**
+
+`lsm firewall` escreve bloco marcado em `/etc/ufw/after.rules`:
+
+```
+*filter
+:ufw-user-forward - [0:0]
+:DOCKER-USER - [0:0]
+-A DOCKER-USER -j ufw-user-forward
+-A DOCKER-USER -j RETURN -s 10.0.0.0/8
+-A DOCKER-USER -j RETURN -s 172.16.0.0/12
+-A DOCKER-USER -j RETURN -s 192.168.0.0/16
+-A DOCKER-USER -j DROP
+COMMIT
+```
+
+Efeito: DOCKER-USER salta para `ufw-user-forward` (onde `ufw route allow`
+mete regras). Tráfego docker→docker (private LAN) faz RETURN cedo, externo
+sem regra cai em DROP. `ufw reload` aplica.
+
+Resultado: container que faz `docker run -p 5432:5432` está **fechado** ao
+mundo até `lsm port allow 5432/tcp <IP>`.
+
+### Comandos
 
 `lsm add-ip X`:
-1. Para cada porta em `state.yaml::managed_ports`: `ufw allow from X to any port P proto T`.
-2. Se a porta tinha regra `Anywhere`, remove-a — passa a estar restrita.
+1. Para cada porta em `managed_ports`: emite `ufw [route] allow from X to
+   any port P proto T` consoante `kind`.
+2. Se a porta tinha regra Anywhere (mesmo chain), remove-a → passa a restrita.
 
 `lsm remove-ip X`:
-1. Para cada porta gerida: `ufw delete allow from X ...`.
-2. Se a porta ficou sem IPs específicos AND não estava `Anywhere`:
-   `ufw allow P/T <label>` para evitar locked-out (reabre a todos).
+1. Para cada porta gerida: `ufw delete [route] allow from X ...` consoante kind.
+2. Não re-abre a todos automaticamente (footgun antigo; portas que ficam
+   sem regras ficam fechadas mesmo).
 
-`fail2ban` lê `ignoreip` direto de `ufw.SpecificSources(sshPort, "tcp")` — IPs
-que já têm acesso explícito ao SSH não são banidos.
+`fail2ban` lê `ignoreip` de `ufw.SpecificSources(sshPort, "tcp")` (INPUT).
+SSH é kind=host, por isso a leitura INPUT está correcta.
 
-Visualização (`Ver IPs / portas geridas` no menu) usa `ufw.AllowedSources` por
-porta gerida + união disso como "whitelist efetiva".
+Visualização (`Network → List ports`) chama `kindAllowedSources(kind, ...)`
+por porta — host olha INPUT, docker olha FORWARD.
 
 ---
 
@@ -490,6 +520,7 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 | `/etc/lsm/config.example.yaml` | template do schema | dpkg (atualizado em upgrades) |
 | `/etc/lsm/state.yaml` | portas geridas | lsm (read/write) |
 | `/etc/sysctl.d/99-lsm.conf` | sysctl tuning | lsm sysctl |
+| `/etc/ufw/after.rules` (bloco marcado) | DOCKER-USER hook → ufw-user-forward + private LAN RETURN + DROP default. Faz `ufw route allow` cobrir portas docker. | lsm firewall |
 | `/etc/fail2ban/jail.local` | jail config | lsm fail2ban |
 | `/etc/apt/apt.conf.d/20auto-upgrades` | unattended-upgrades periodic | lsm upgrades |
 | `/etc/sudoers.d/lsm` | NOPASSWD blanket em `/usr/sbin/lsm` ao SSH user | lsm ssh |
@@ -528,7 +559,7 @@ Distingue install fresco (`$2` vazio) vs upgrade (`$2 = OLD_VERSION`):
 ## 17. Próximos módulos planeados (por user)
 
 - **wireguard** — VPN. Config provável: peer config inline ou path para conf. Server ou client peer.
-- **container monitoring** — par do `lsm status` para containers do docker rootless. Ler cgroup v2 + `docker stats`. Filtrar por user docker24. Inclui CPU/RAM/disk-IO/net por container.
+- **container monitoring** — par do `lsm status` para containers. Ler cgroup v2 + `docker stats`. CPU/RAM/disk-IO/net por container.
 - **ssh-keys** — deploy de `authorized_keys` + opção para deprecar PasswordAuth (`PasswordAuthentication no` no drop-in atual). Mais seguro que password.
 - **backup** — snapshot tar de `/etc/lsm/{config,state}.yaml` + UFW rules + sshd drop-in para recuperar config rapidamente.
 
@@ -565,7 +596,7 @@ Lista de coisas detetadas em full review pós-refactor. Não bloqueiam; correr q
 - [ ] Adicionar **ssh-keys** module (deploy authorized_keys + opção desligar PasswordAuth).
 - [ ] Adicionar **backup** subcmd (tar de config+state+ufw+sshd drop-in).
 - [ ] Considerar **`port add --restrict` registar intent** em `state.ManagedPort.OpenPolicy` (`open|restricted`) para `portRevoke` saber se reabre ou não.
-- [ ] Considerar adicionar `lsm doctor` que corre validate + dependency-check (machinectl, slirp4netns, fuse-overlayfs presentes, etc).
+- [ ] Considerar adicionar `lsm doctor` que corre validate + dependency-check.
 - [ ] Adicionar suporte a IPv6 nas regras UFW (`ufw status` IPv6 entries são skipped agora; user pode querer add-ip de IPv6).
 
 ---
@@ -575,6 +606,6 @@ Lista de coisas detetadas em full review pós-refactor. Não bloqueiam; correr q
 - **Password SSH não persiste**. É pedida só quando o user ainda não existe. Se rodar `lsm ssh` sobre user existente, password mantém-se a que já estava. Para reset: `passwd <user>` manual.
 - **Sysctl `net.ipv6.conf.all.forwarding=1`** pode ser indesejado em hosts puramente IPv4. Considerar tornar opcional via config.
 - **Fail2ban backend `systemd`** assume rsyslog/journald. Em Debian default funciona. Em hosts customizados pode falhar.
-- **Docker rootless**: `dockerd-rootless-setuptool.sh install` precisa de `machinectl shell` que precisa de `systemd-container` (geralmente lá). Validar em distros minimalistas.
+- **Docker rootful**: socket `/var/run/docker.sock` é só-root. Não adicionar users ao grupo `docker` (= root sem audit). Workloads correm via `sudo -i` ou root login.
 - **`lsm timesync` em containers/LXC** sem CAP_SYS_TIME falha. Não tratamos esse caso.
 - **`hostname` em containers** pode estar bloqueado pelo runtime. `hostnamectl` retorna erro silencioso? Verificar.
