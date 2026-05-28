@@ -133,12 +133,23 @@ func runBootstrap() error {
 	}
 	fmt.Println()
 	fmt.Println("─── Auto-launch on login ─────────────────────")
-	fmt.Println("Add a snippet to ~/.profile so that whenever")
-	fmt.Printf("'%s' logs in via SSH, the lsm menu opens automatically.\n", cfg.SSH.User)
-	fmt.Println("(They can press 'x' to exit and drop into a regular shell.)")
+	fmt.Println("Add a snippet to ~/.profile so the lsm menu opens automatically")
+	fmt.Println("on interactive login. Press 'x' inside the menu to exit and")
+	fmt.Println("drop into a regular shell.")
+	fmt.Println()
+	fmt.Printf("• %s (SSH operator)\n", cfg.SSH.User)
 	if prompt.Confirm("Enable auto-launch for "+cfg.SSH.User+"?", true) {
 		if err := sshmod.SetAutoLaunchLSM(cfg.SSH.User, true); err != nil {
 			fmt.Fprintln(os.Stderr, "auto-launch:", err)
+		}
+	}
+	fmt.Println()
+	fmt.Println("• root (triggered by `su -`, `sudo -i`, or direct root login)")
+	fmt.Println("  Plain `su` without `-` doesn't load /root/.profile, so the")
+	fmt.Println("  menu won't fire there — use `su -` instead.")
+	if prompt.Confirm("Enable auto-launch for root?", true) {
+		if err := sshmod.SetAutoLaunchLSM("root", true); err != nil {
+			fmt.Fprintln(os.Stderr, "auto-launch (root):", err)
 		}
 	}
 	return nil

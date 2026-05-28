@@ -155,10 +155,16 @@ func SetAutoLaunchLSM(name string, enable bool) error {
 	if enable {
 		snippet := "\n" + beginMarker + `
 # Auto-run the lsm menu on interactive login. The LSM_LAUNCHED guard
-# prevents a sudo-shell from re-triggering lsm recursively.
+# prevents a sudo-shell from re-triggering lsm recursively. When the
+# login is already root (su -, sudo -i, direct root) we skip sudo to
+# avoid an unnecessary wrapper invocation.
 if [ -t 0 ] && [ -z "$LSM_LAUNCHED" ]; then
     export LSM_LAUNCHED=1
-    sudo /usr/sbin/lsm
+    if [ "$(id -u)" = "0" ]; then
+        /usr/sbin/lsm
+    else
+        sudo /usr/sbin/lsm
+    fi
 fi
 ` + endMarker + "\n"
 		body += snippet
