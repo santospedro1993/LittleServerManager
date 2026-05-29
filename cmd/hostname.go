@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/hostname"
-	"lsm/internal/runner"
+	"erp24/internal/config"
+	"erp24/internal/hostname"
+	"erp24/internal/runner"
 )
 
 var hostnameCmd = &cobra.Command{

@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 // Update refreshes the apt package index.
@@ -43,16 +43,16 @@ func EnsureNeedrestart() error {
 	return WriteNeedrestartConfig()
 }
 
-// WriteNeedrestartConfig drops /etc/needrestart/conf.d/99-lsm.conf so the
+// WriteNeedrestartConfig drops /etc/needrestart/conf.d/99-erp24.conf so the
 // apt-integrated needrestart hook never tries to restart services and never
 // shows the interactive "Which services should be restarted?" dialog.
 // We do detection ourselves after the upgrade and ask the user about a full
 // reboot — restarting individual daemons inline is too risky for a
 // provisioning tool (e.g. dbus.service restart can drop sshd sessions).
 func WriteNeedrestartConfig() error {
-	const path = "/etc/needrestart/conf.d/99-lsm.conf"
-	body := `# Managed by lsm — list-only mode.
-# lsm reads pending restarts via 'needrestart -b -p' and prompts for a full
+	const path = "/etc/needrestart/conf.d/99-erp24.conf"
+	body := `# Managed by erp24 — list-only mode.
+# erp24 reads pending restarts via 'needrestart -b -p' and prompts for a full
 # reboot; we never let the apt hook restart services inline.
 $nrconf{restart} = 'l';
 $nrconf{kernelhints} = -1;
@@ -67,9 +67,9 @@ $nrconf{ucodehints} = 0;
 
 // PendingRestart summarises what needrestart reports after an upgrade.
 type PendingRestart struct {
-	Services      []string // user-visible systemd units that loaded old libs
-	KernelStale   bool     // running kernel != on-disk kernel
-	MicrocodeStale bool    // CPU microcode update pending
+	Services       []string // user-visible systemd units that loaded old libs
+	KernelStale    bool     // running kernel != on-disk kernel
+	MicrocodeStale bool     // CPU microcode update pending
 }
 
 // HasAny reports whether any reboot-worthy condition is present.
@@ -122,21 +122,21 @@ func RebootNow() error {
 
 // ScheduleRebootAt schedules a reboot for the next occurrence of the given
 // systemd OnCalendar spec (e.g. "*-*-* 04:00:00" = next 4 AM). Idempotent:
-// if a previous lsm-reboot timer exists, it's replaced.
+// if a previous erp24-reboot timer exists, it's replaced.
 func ScheduleRebootAt(calendarSpec string) error {
-	// Stop any previous scheduled reboot from lsm.
-	_ = runner.Run("systemctl", "stop", "lsm-reboot.timer")
-	_ = runner.Run("systemctl", "stop", "lsm-reboot.service")
+	// Stop any previous scheduled reboot from erp24.
+	_ = runner.Run("systemctl", "stop", "erp24-reboot.timer")
+	_ = runner.Run("systemctl", "stop", "erp24-reboot.service")
 	return runner.Run("systemd-run",
 		"--on-calendar="+calendarSpec,
-		"--unit=lsm-reboot.service",
-		"/sbin/shutdown", "-r", "now", "lsm scheduled reboot")
+		"--unit=erp24-reboot.service",
+		"/sbin/shutdown", "-r", "now", "erp24 scheduled reboot")
 }
 
-// CancelScheduledReboot removes any pending lsm-scheduled reboot.
+// CancelScheduledReboot removes any pending erp24-scheduled reboot.
 func CancelScheduledReboot() error {
-	_ = runner.Run("systemctl", "stop", "lsm-reboot.timer")
-	return runner.Run("systemctl", "stop", "lsm-reboot.service")
+	_ = runner.Run("systemctl", "stop", "erp24-reboot.timer")
+	return runner.Run("systemctl", "stop", "erp24-reboot.service")
 }
 
 // RebootRequired reports whether /var/run/reboot-required exists,
@@ -159,10 +159,10 @@ func RebootRequired() (bool, []string) {
 func aptGet(args ...string) error {
 	full := append([]string{"apt-get"}, args...)
 	return runner.RunEnv(map[string]string{
-		"DEBIAN_FRONTEND":          "noninteractive",
+		"DEBIAN_FRONTEND": "noninteractive",
 		// NEEDRESTART_MODE=l + NEEDRESTART_SUSPEND=1 keep the apt hook from
 		// ever showing the "Which services should be restarted?" dialog.
-		// The drop-in at /etc/needrestart/conf.d/99-lsm.conf is the durable
+		// The drop-in at /etc/needrestart/conf.d/99-erp24.conf is the durable
 		// guarantee; these env vars are belt-and-braces for the first run
 		// before the drop-in lands.
 		"NEEDRESTART_MODE":         "l",

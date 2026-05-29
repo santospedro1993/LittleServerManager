@@ -6,14 +6,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"lsm/internal/config"
-	"lsm/internal/prompt"
-	sshmod "lsm/internal/ssh"
-	"lsm/internal/state"
-	"lsm/internal/sysupdate"
+	"erp24/internal/config"
+	"erp24/internal/prompt"
+	sshmod "erp24/internal/ssh"
+	"erp24/internal/state"
+	"erp24/internal/sysupdate"
 )
 
-// runMenu drives the interactive flow when lsm is invoked with no subcommand.
+// runMenu drives the interactive flow when erp24 is invoked with no subcommand.
 // Menu options are filtered by role (admin = real root, operator = sudo from
 // non-root). Submenus group related actions; numeric input picks an option,
 // 'b' goes back, 'x' exits.
@@ -82,15 +82,15 @@ func runMenu() error {
 // runBootstrap is the first-run flow when no config exists. Steps:
 //
 //  1. apt update + upgrade + autoremove. If a reboot is required, prompt.
-//     If user reboots, lsm exits — they re-run after reboot and we resume
+//     If user reboots, erp24 exits — they re-run after reboot and we resume
 //     here (config still missing, so this flow re-enters at step 1, which
 //     is now a no-op since the system is up to date).
 //  2. Wizard (timezone, hostname, ssh user/port, docker user, modules).
 //  3. Run selected modules.
-//  4. Offer to make `sudo lsm` auto-launch on the SSH user's login.
+//  4. Offer to make `sudo erp24` auto-launch on the SSH user's login.
 func runBootstrap() error {
 	fmt.Println("╔════════════════════════════════════════════╗")
-	fmt.Println("║  lsm — first-run bootstrap                 ║")
+	fmt.Println("║  erp24 — first-run bootstrap                 ║")
 	fmt.Println("╚════════════════════════════════════════════╝")
 	fmt.Println()
 	fmt.Println("Step 1/3: System update (apt update / upgrade / autoremove).")
@@ -101,12 +101,12 @@ func runBootstrap() error {
 	if need, _ := sysupdate.RebootRequired(); need {
 		fmt.Println()
 		fmt.Println("⚠ Reboot recommended before continuing setup.")
-		fmt.Println("  After rebooting, re-run `sudo lsm` to resume here.")
+		fmt.Println("  After rebooting, re-run `sudo erp24` to resume here.")
 		if err := promptReboot(); err != nil {
 			return err
 		}
 		// Whether the user picked "now", "schedule", or "defer", we stop
-		// the bootstrap here. Re-running lsm later (no config) lands back
+		// the bootstrap here. Re-running erp24 later (no config) lands back
 		// in this flow.
 		return nil
 	}
@@ -133,13 +133,13 @@ func runBootstrap() error {
 	}
 	fmt.Println()
 	fmt.Println("─── Auto-launch on login ─────────────────────")
-	fmt.Println("Add a snippet to ~/.profile so the lsm menu opens automatically")
+	fmt.Println("Add a snippet to ~/.profile so the erp24 menu opens automatically")
 	fmt.Println("on interactive login. Press 'x' inside the menu to exit and")
 	fmt.Println("drop into a regular shell.")
 	fmt.Println()
 	fmt.Printf("• %s (SSH operator)\n", cfg.SSH.User)
 	if prompt.Confirm("Enable auto-launch for "+cfg.SSH.User+"?", true) {
-		if err := sshmod.SetAutoLaunchLSM(cfg.SSH.User, true); err != nil {
+		if err := sshmod.SetAutoLaunchERP24(cfg.SSH.User, true); err != nil {
 			fmt.Fprintln(os.Stderr, "auto-launch:", err)
 		}
 	}
@@ -148,7 +148,7 @@ func runBootstrap() error {
 	fmt.Println("  Plain `su` without `-` doesn't load /root/.profile, so the")
 	fmt.Println("  menu won't fire there — use `su -` instead.")
 	if prompt.Confirm("Enable auto-launch for root?", true) {
-		if err := sshmod.SetAutoLaunchLSM("root", true); err != nil {
+		if err := sshmod.SetAutoLaunchERP24("root", true); err != nil {
 			fmt.Fprintln(os.Stderr, "auto-launch (root):", err)
 		}
 	}
@@ -160,7 +160,7 @@ func printHeader(admin bool) {
 	if admin {
 		role = "admin (root)"
 	}
-	line := fmt.Sprintf("lsm  ·  config: %s  ·  role: %s", cfgFile, role)
+	line := fmt.Sprintf("erp24  ·  config: %s  ·  role: %s", cfgFile, role)
 	border := strings.Repeat("─", utf8.RuneCountInString(line)+2)
 	fmt.Println()
 	fmt.Println("┌" + border + "┐")
@@ -352,7 +352,7 @@ func runValidateAndMaybeFix(admin bool) error {
 		return nil
 	}
 	if !admin {
-		fmt.Println("\nLog in as root to apply fixes (`lsm` from a root shell).")
+		fmt.Println("\nLog in as root to apply fixes (`erp24` from a root shell).")
 		return nil
 	}
 	if len(failed) == 0 {
@@ -392,16 +392,9 @@ func interactivePortAdd() error {
 		return err
 	}
 	label := prompt.Ask("Label", spec)
-	kindIdx := prompt.Choose("Kind?", []string{
-		"docker — published by a container (FORWARD chain)",
-		"host   — service listening on the host (INPUT chain)",
-	})
-	kind := state.KindDocker
-	if kindIdx == 2 {
-		kind = state.KindHost
-	}
-	restrict := prompt.Confirm("Add closed (no Anywhere rule), grant per-IP later?", false)
-	return portAdd(port, proto, label, kind, restrict)
+	// Caso comum: expor porta de container, aberta a todos. Menu assume isso.
+	// host services (--host) e restrição por-IP (--restrict) ficam via CLI.
+	return portAdd(port, proto, label, state.KindDocker, false)
 }
 
 func interactivePortRemove() error {
@@ -533,7 +526,7 @@ func showOverview() error {
 	}
 
 	fmt.Println()
-	fmt.Println("--- Modules installed by lsm ---")
+	fmt.Println("--- Modules installed by erp24 ---")
 	if len(st.InstalledModules) == 0 {
 		fmt.Println("  (none)")
 	} else {
@@ -548,7 +541,7 @@ func showOverview() error {
 	return nil
 }
 
-// chooseAndRunModule and runAllModules retained for `lsm all` and other callers.
+// chooseAndRunModule and runAllModules retained for `erp24 all` and other callers.
 
 // runAllModules runs the modules selected during the wizard, in safe order
 // (firewall first, ssh after firewall, etc). Modules disabled in

@@ -4,12 +4,12 @@ import (
 	"os"
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
-const ConfPath = "/etc/sysctl.d/99-lsm.conf"
+const ConfPath = "/etc/sysctl.d/99-erp24.conf"
 
-const Body = `# Managed by lsm — do not edit by hand.
+const Body = `# Managed by erp24 — do not edit by hand.
 
 # --- Network hardening ---
 net.ipv4.conf.all.rp_filter = 1

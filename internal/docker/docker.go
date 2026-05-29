@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 // conflicting is the set of distro-shipped or alternative docker stacks that

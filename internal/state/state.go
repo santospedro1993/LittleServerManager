@@ -107,7 +107,7 @@ func (s *State) RemovePort(port int, proto string) bool {
 	return false
 }
 
-// MarkInstalled records that a module has been run successfully by lsm.
+// MarkInstalled records that a module has been run successfully by erp24.
 // Returns true if newly added.
 func (s *State) MarkInstalled(name string) bool {
 	for _, n := range s.InstalledModules {
@@ -119,7 +119,7 @@ func (s *State) MarkInstalled(name string) bool {
 	return true
 }
 
-// IsInstalled reports whether a module was previously run by lsm.
+// IsInstalled reports whether a module was previously run by erp24.
 func (s *State) IsInstalled(name string) bool {
 	for _, n := range s.InstalledModules {
 		if n == name {

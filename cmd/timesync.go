@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/runner"
-	"lsm/internal/timesync"
+	"erp24/internal/config"
+	"erp24/internal/runner"
+	"erp24/internal/timesync"
 )
 
 var timesyncCmd = &cobra.Command{

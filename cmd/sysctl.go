@@ -3,13 +3,13 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"lsm/internal/runner"
-	"lsm/internal/sysctl"
+	"erp24/internal/runner"
+	"erp24/internal/sysctl"
 )
 
 var sysctlCmd = &cobra.Command{
 	Use:   "sysctl",
-	Short: "Apply kernel hardening + tuning (writes /etc/sysctl.d/99-lsm.conf)",
+	Short: "Apply kernel hardening + tuning (writes /etc/sysctl.d/99-erp24.conf)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := RequireAdmin(); err != nil {
 			return err

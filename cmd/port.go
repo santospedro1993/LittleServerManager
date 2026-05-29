@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/prompt"
-	"lsm/internal/runner"
-	"lsm/internal/state"
-	"lsm/internal/ufw"
+	"erp24/internal/config"
+	"erp24/internal/prompt"
+	"erp24/internal/runner"
+	"erp24/internal/state"
+	"erp24/internal/ufw"
 )
 
 var portCmd = &cobra.Command{
@@ -50,7 +50,7 @@ var portAddCmd = &cobra.Command{
 
 var portRemoveCmd = &cobra.Command{
 	Use:   "remove <PORT>/<PROTO>",
-	Short: "Close port + unregister from lsm state",
+	Short: "Close port + unregister from erp24 state",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := RequireAdmin(); err != nil {
@@ -229,7 +229,7 @@ func portAdd(port int, proto, label, kind string, restrict bool) error {
 		runner.Log("Porta %d/%s já estava registada (kind=%s).", port, proto, kind)
 	}
 	if restrict {
-		runner.Log("--restrict: NÃO abro nada. Usa 'lsm port allow %d/%s <IP>' para conceder acesso.", port, proto)
+		runner.Log("--restrict: NÃO abro nada. Usa 'erp24 port allow %d/%s <IP>' para conceder acesso.", port, proto)
 		return nil
 	}
 	if kindIsOpenToAll(kind, port, proto) || len(kindSpecificSources(kind, port, proto)) > 0 {
@@ -276,7 +276,7 @@ func portAllow(port int, proto, ip string) error {
 		return err
 	}
 	if !st.HasPort(port, proto) {
-		return fmt.Errorf("porta %d/%s não está em state — corre 'lsm port add %d/%s' primeiro", port, proto, port, proto)
+		return fmt.Errorf("porta %d/%s não está em state — corre 'erp24 port add %d/%s' primeiro", port, proto, port, proto)
 	}
 	kind := kindOf(st, port, proto)
 	for _, src := range kindSpecificSources(kind, port, proto) {

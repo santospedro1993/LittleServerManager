@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"lsm/internal/runner"
-	"lsm/internal/ufw"
+	"erp24/internal/runner"
+	"erp24/internal/ufw"
 )
 
 func UserExists(name string) bool {
@@ -18,12 +18,12 @@ func UserExists(name string) bool {
 
 // CreateUser creates name with the given password (only if user doesn't exist).
 // The user is intentionally NOT added to the sudo group — full root access via
-// sudo is reserved for explicit root login. Operator-class lsm commands are
-// granted via a narrow /etc/sudoers.d/lsm drop-in (see GrantPasswordlessLSM).
+// sudo is reserved for explicit root login. Operator-class erp24 commands are
+// granted via a narrow /etc/sudoers.d/erp24 drop-in (see GrantPasswordlessERP24).
 //
-// If the user was previously in the sudo group (from older lsm versions or
+// If the user was previously in the sudo group (from older erp24 versions or
 // manual setup), this function removes the membership so the security model
-// stays consistent. Password is consumed once and never persisted by lsm.
+// stays consistent. Password is consumed once and never persisted by erp24.
 func CreateUser(name, password string) error {
 	if UserExists(name) {
 		runner.Log("User '%s' already exists — keeping current password.", name)
@@ -53,7 +53,7 @@ func CreateUser(name, password string) error {
 	return nil
 }
 
-// Harden writes our settings to /etc/ssh/sshd_config.d/99-lsm.conf rather
+// Harden writes our settings to /etc/ssh/sshd_config.d/99-erp24.conf rather
 // than editing the main sshd_config. Reasons:
 //   - Debian 12+ ships an `Include /etc/ssh/sshd_config.d/*.conf` directive
 //     and recommends drop-ins for local overrides.
@@ -65,8 +65,8 @@ func CreateUser(name, password string) error {
 // Drop-in directives win because sshd takes the first occurrence of each
 // option, and Include is processed early in Debian's default sshd_config.
 func Harden(port int) error {
-	const dropIn = "/etc/ssh/sshd_config.d/99-lsm.conf"
-	body := fmt.Sprintf(`# Managed by lsm — do not edit by hand.
+	const dropIn = "/etc/ssh/sshd_config.d/99-erp24.conf"
+	body := fmt.Sprintf(`# Managed by erp24 — do not edit by hand.
 Port %d
 PermitRootLogin no
 PasswordAuthentication yes
@@ -89,23 +89,23 @@ PasswordAuthentication yes
 	return nil
 }
 
-// GrantPasswordlessLSM writes /etc/sudoers.d/lsm so the given user can run
-// `sudo lsm ...` without a password prompt. The blanket NOPASSWD on the
-// binary is fine: lsm itself enforces the admin/operator split in-app via
+// GrantPasswordlessERP24 writes /etc/sudoers.d/erp24 so the given user can run
+// `sudo erp24 ...` without a password prompt. The blanket NOPASSWD on the
+// binary is fine: erp24 itself enforces the admin/operator split in-app via
 // RequireAdmin (which rejects destructive ops when $SUDO_USER is set to a
 // non-root user). Sudoers stays simple; the gate is one place to maintain.
 //
 // The file is validated with `visudo -cf` before being moved into place —
 // a malformed drop-in would break sudo for everyone, so we never install
 // it untested.
-func GrantPasswordlessLSM(name string) error {
-	const final = "/etc/sudoers.d/lsm"
-	const tmp = "/etc/sudoers.d/.lsm.tmp"
+func GrantPasswordlessERP24(name string) error {
+	const final = "/etc/sudoers.d/erp24"
+	const tmp = "/etc/sudoers.d/.erp24.tmp"
 
-	body := fmt.Sprintf(`# Managed by lsm — do not edit by hand.
-# Blanket NOPASSWD on the lsm binary; in-app RequireAdmin blocks destructive
+	body := fmt.Sprintf(`# Managed by erp24 — do not edit by hand.
+# Blanket NOPASSWD on the erp24 binary; in-app RequireAdmin blocks destructive
 # subcommands when invoked by non-root, so the gate stays in one place.
-%[1]s ALL=(root) NOPASSWD: /usr/sbin/lsm
+%[1]s ALL=(root) NOPASSWD: /usr/sbin/erp24
 `, name)
 
 	if err := os.WriteFile(tmp, []byte(body), 0440); err != nil {
@@ -118,21 +118,21 @@ func GrantPasswordlessLSM(name string) error {
 	if err := os.Rename(tmp, final); err != nil {
 		return fmt.Errorf("move sudoers to %s: %w", final, err)
 	}
-	runner.Log("sudoers drop-in installed: '%s' may run `sudo lsm` without password (in-app RequireAdmin still gates destructive ops).", name)
+	runner.Log("sudoers drop-in installed: '%s' may run `sudo erp24` without password (in-app RequireAdmin still gates destructive ops).", name)
 	return nil
 }
 
-// SetAutoLaunchLSM toggles a snippet in the user's login profile that runs
-// `sudo lsm` on every interactive login. We pick `.profile` over
+// SetAutoLaunchERP24 toggles a snippet in the user's login profile that runs
+// `sudo erp24` on every interactive login. We pick `.profile` over
 // `.bash_profile` because Debian's default user setup uses `.profile`
 // (which sources `.bashrc`); creating a `.bash_profile` would shadow that
 // and the user's normal shell setup would silently stop running.
 //
 // The snippet is bracketed by marker comments so we can remove it cleanly.
 // Idempotent.
-func SetAutoLaunchLSM(name string, enable bool) error {
-	const beginMarker = "# >>> lsm auto-launch >>>"
-	const endMarker = "# <<< lsm auto-launch <<<"
+func SetAutoLaunchERP24(name string, enable bool) error {
+	const beginMarker = "# >>> erp24 auto-launch >>>"
+	const endMarker = "# <<< erp24 auto-launch <<<"
 
 	u, err := user.Lookup(name)
 	if err != nil {
@@ -154,16 +154,16 @@ func SetAutoLaunchLSM(name string, enable bool) error {
 
 	if enable {
 		snippet := "\n" + beginMarker + `
-# Auto-run the lsm menu on interactive login. The LSM_LAUNCHED guard
-# prevents a sudo-shell from re-triggering lsm recursively. When the
+# Auto-run the erp24 menu on interactive login. The ERP24_LAUNCHED guard
+# prevents a sudo-shell from re-triggering erp24 recursively. When the
 # login is already root (su -, sudo -i, direct root) we skip sudo to
 # avoid an unnecessary wrapper invocation.
-if [ -t 0 ] && [ -z "$LSM_LAUNCHED" ]; then
-    export LSM_LAUNCHED=1
+if [ -t 0 ] && [ -z "$ERP24_LAUNCHED" ]; then
+    export ERP24_LAUNCHED=1
     if [ "$(id -u)" = "0" ]; then
-        /usr/sbin/lsm
+        /usr/sbin/erp24
     else
-        sudo /usr/sbin/lsm
+        sudo /usr/sbin/erp24
     fi
 fi
 ` + endMarker + "\n"
@@ -179,7 +179,7 @@ fi
 	gid, _ := strconv.Atoi(u.Gid)
 	_ = os.Chown(profile, uid, gid)
 	if enable {
-		runner.Log("Auto-launch enabled: `sudo lsm` runs on %s login (%s).", name, profile)
+		runner.Log("Auto-launch enabled: `sudo erp24` runs on %s login (%s).", name, profile)
 	} else {
 		runner.Log("Auto-launch disabled for %s (%s).", name, profile)
 	}
@@ -187,7 +187,7 @@ fi
 }
 
 // OpenFirewall opens the SSH port in UFW. Initial open is to all sources;
-// per-IP whitelisting is applied later via `lsm port allow` / `lsm add-ip`
+// per-IP whitelisting is applied later via `erp24 port allow` / `erp24 add-ip`
 // (which read UFW state directly, not config). If the port already has
 // specific ALLOW rules, this is a no-op so we don't widen access.
 func OpenFirewall(port int) error {

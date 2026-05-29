@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"lsm/internal/runner"
-	"lsm/internal/upgrades"
+	"erp24/internal/runner"
+	"erp24/internal/upgrades"
 )
 
 var upgradesCmd = &cobra.Command{

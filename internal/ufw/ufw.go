@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 func Installed() bool { return runner.HasCommand("ufw") }
@@ -273,7 +273,7 @@ func Reload() error {
 // afterRulesPath is the file UFW concatenates after the user-defined rules.
 const afterRulesPath = "/etc/ufw/after.rules"
 
-// dockerBlockBegin / dockerBlockEnd bracket the lsm-managed block in
+// dockerBlockBegin / dockerBlockEnd bracket the erp24-managed block in
 // /etc/ufw/after.rules. The block makes docker-published ports honour UFW
 // FORWARD rules: DOCKER-USER jumps into ufw-user-forward (where `ufw route
 // allow ...` rules live), lets internal docker networks RETURN early so
@@ -282,13 +282,13 @@ const afterRulesPath = "/etc/ufw/after.rules"
 // Source-of-pattern: the standard ufw-docker recipe (chaifeng/ufw-docker),
 // adapted to a single inline block we own.
 const (
-	dockerBlockBegin = "# BEGIN LSM-DOCKER"
-	dockerBlockEnd   = "# END LSM-DOCKER"
+	dockerBlockBegin = "# BEGIN ERP24-DOCKER"
+	dockerBlockEnd   = "# END ERP24-DOCKER"
 )
 
-const dockerBlockBody = `# BEGIN LSM-DOCKER
-# Managed by lsm. Do not edit between BEGIN/END markers — run
-# 'sudo lsm firewall' to regenerate. Removing this block re-exposes
+const dockerBlockBody = `# BEGIN ERP24-DOCKER
+# Managed by erp24. Do not edit between BEGIN/END markers — run
+# 'sudo erp24 firewall' to regenerate. Removing this block re-exposes
 # every docker-published port to the world, bypassing UFW.
 *filter
 :ufw-user-forward - [0:0]
@@ -299,11 +299,11 @@ const dockerBlockBody = `# BEGIN LSM-DOCKER
 -A DOCKER-USER -j RETURN -s 192.168.0.0/16
 -A DOCKER-USER -j DROP
 COMMIT
-# END LSM-DOCKER
+# END ERP24-DOCKER
 `
 
 // HasAfterRulesDockerBlock reports whether /etc/ufw/after.rules already
-// contains the lsm-managed DOCKER-USER block.
+// contains the erp24-managed DOCKER-USER block.
 func HasAfterRulesDockerBlock() bool {
 	data, err := os.ReadFile(afterRulesPath)
 	if err != nil {
@@ -313,7 +313,7 @@ func HasAfterRulesDockerBlock() bool {
 		strings.Contains(string(data), dockerBlockEnd)
 }
 
-// WriteAfterRulesDockerBlock appends (or replaces) the lsm-managed
+// WriteAfterRulesDockerBlock appends (or replaces) the erp24-managed
 // DOCKER-USER block in /etc/ufw/after.rules. Idempotent: an existing block
 // with the same body is left untouched, a stale block is replaced.
 // Caller is responsible for calling Reload() afterwards.
@@ -327,7 +327,7 @@ func WriteAfterRulesDockerBlock() error {
 	beginIdx := strings.Index(body, dockerBlockBegin)
 	endIdx := strings.Index(body, dockerBlockEnd)
 	if beginIdx >= 0 && endIdx > beginIdx {
-		// Replace existing block (covers stale lsm versions).
+		// Replace existing block (covers stale erp24 versions).
 		endLineEnd := endIdx + len(dockerBlockEnd)
 		// Eat the trailing newline so we don't accumulate blanks.
 		if endLineEnd < len(body) && body[endLineEnd] == '\n' {
@@ -350,7 +350,7 @@ func WriteAfterRulesDockerBlock() error {
 	return os.WriteFile(afterRulesPath, []byte(body), 0640)
 }
 
-// RemoveAfterRulesDockerBlock strips the lsm-managed block from
+// RemoveAfterRulesDockerBlock strips the erp24-managed block from
 // /etc/ufw/after.rules. Used only for teardown/uninstall paths.
 func RemoveAfterRulesDockerBlock() error {
 	data, err := os.ReadFile(afterRulesPath)

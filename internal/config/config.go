@@ -13,7 +13,7 @@ import (
 // is treated as v0 (pre-versioning era).
 const CurrentSchemaVersion = 1
 
-// Config represents lsm intent — preferences and target values.
+// Config represents erp24 intent — preferences and target values.
 // It does NOT persist secrets (passwords) nor derived runtime data
 // (effective UFW whitelists). Those live in state or the system itself.
 type Config struct {
@@ -30,8 +30,8 @@ type Config struct {
 
 // ModulesConfig records which optional modules the user opted into during
 // the wizard. firewall + ssh are mandatory and not configurable.
-// `lsm all` and the post-wizard auto-run respect these flags; individual
-// `lsm <module>` invocations always run regardless.
+// `erp24 all` and the post-wizard auto-run respect these flags; individual
+// `erp24 <module>` invocations always run regardless.
 type ModulesConfig struct {
 	Firewall bool `yaml:"firewall"`
 	SSH      bool `yaml:"ssh"`
@@ -91,7 +91,7 @@ func (c *Config) validate() error {
 	c.Modules.Firewall = true
 	c.Modules.SSH = true
 	// Schema migration. SchemaVersion == 0 means the config was written
-	// before lsm started versioning the file. In that era, optional
+	// before erp24 started versioning the file. In that era, optional
 	// modules weren't expressed in YAML — they were all implicitly on.
 	// After unmarshal those fields are zero (false), so we flip them to
 	// the legacy-era default (true) to avoid silently disabling modules
@@ -105,7 +105,7 @@ func (c *Config) validate() error {
 		c.Modules.Upgrades = true
 		fmt.Fprintf(os.Stderr,
 			"warning: %s has no schema_version (legacy config) — assuming all modules enabled.\n"+
-				"         Re-run `lsm init` or add `schema_version: %d` and the modules you actually want.\n",
+				"         Re-run `erp24 init` or add `schema_version: %d` and the modules you actually want.\n",
 			c.path, CurrentSchemaVersion)
 		c.SchemaVersion = CurrentSchemaVersion
 	}

@@ -3,7 +3,7 @@ package upgrades
 import (
 	"os"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 const periodicConf = "/etc/apt/apt.conf.d/20auto-upgrades"
@@ -25,7 +25,7 @@ func Install() error {
 // EnablePeriodic writes /etc/apt/apt.conf.d/20auto-upgrades enabling
 // daily update + unattended-upgrade + autoclean every 7 days.
 func EnablePeriodic() error {
-	body := `// Managed by lsm.
+	body := `// Managed by erp24.
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";

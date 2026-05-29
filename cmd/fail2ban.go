@@ -3,10 +3,10 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/fail2ban"
-	"lsm/internal/runner"
-	"lsm/internal/ufw"
+	"erp24/internal/config"
+	"erp24/internal/fail2ban"
+	"erp24/internal/runner"
+	"erp24/internal/ufw"
 )
 
 var fail2banCmd = &cobra.Command{

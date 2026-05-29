@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 func Installed() bool { return runner.HasCommand("fail2ban-server") }
@@ -24,7 +24,7 @@ func WriteJailConfig(sshPort int, ignoreIPs []string) error {
 	ignore := []string{"127.0.0.1/8", "::1"}
 	ignore = append(ignore, ignoreIPs...)
 
-	body := fmt.Sprintf(`# Managed by lsm — local overrides; do not edit by hand.
+	body := fmt.Sprintf(`# Managed by erp24 — local overrides; do not edit by hand.
 [DEFAULT]
 ignoreip = %s
 bantime  = 1h

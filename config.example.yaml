@@ -1,9 +1,9 @@
-# lsm config — intent / preferences only.
+# erp24 config — intent / preferences only.
 # Does NOT contain secrets (passwords are prompted at runtime).
 # Does NOT contain UFW whitelist (derived from the firewall itself).
 
-# Schema version of this file. Bumped by lsm when the YAML layout changes.
-# Files without this key are treated as legacy (v0): lsm forces all optional
+# Schema version of this file. Bumped by erp24 when the YAML layout changes.
+# Files without this key are treated as legacy (v0): erp24 forces all optional
 # modules to true so old installs don't silently lose modules.
 schema_version: 1
 
@@ -27,7 +27,7 @@ network:
   #   false → never open (manual UFW management)
   auto_open_ports: ask
 
-# Which optional modules to install on `lsm all` and on the post-wizard run.
+# Which optional modules to install on `erp24 all` and on the post-wizard run.
 # firewall and ssh are always enabled (security baseline). The rest reflect
 # wizard answers and can be edited here later.
 modules:

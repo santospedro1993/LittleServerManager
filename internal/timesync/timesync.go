@@ -3,7 +3,7 @@ package timesync
 import (
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 // Install is a no-op: systemd-timesyncd ships with systemd.

@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/prompt"
-	"lsm/internal/runner"
-	"lsm/internal/sysupdate"
+	"erp24/internal/prompt"
+	"erp24/internal/runner"
+	"erp24/internal/sysupdate"
 )
 
 var systemCmd = &cobra.Command{
@@ -37,7 +37,7 @@ var systemRebootCmd = &cobra.Command{
 // Backward-compat alias for the previous top-level name.
 var updateServerCmd = &cobra.Command{
 	Use:    "update-server",
-	Short:  "Alias for `lsm system update`",
+	Short:  "Alias for `erp24 system update`",
 	Hidden: true,
 	RunE:   systemUpdateCmd.RunE,
 }
@@ -118,14 +118,14 @@ func runSystemUpdate() error {
 		}
 	}
 	fmt.Println()
-	fmt.Println("lsm doesn't restart services individually (risk of dropping the")
+	fmt.Println("erp24 doesn't restart services individually (risk of dropping the")
 	fmt.Println("active sshd session). A full reboot resolves all of the above.")
 	return promptReboot()
 }
 
 func promptReboot() error {
 	if yes {
-		runner.Log("--yes active: NOT rebooting. Run `sudo lsm system reboot` when ready.")
+		runner.Log("--yes active: NOT rebooting. Run `sudo erp24 system reboot` when ready.")
 		return nil
 	}
 	idx := prompt.Choose("How do you want to handle the reboot?", []string{
@@ -141,10 +141,10 @@ func promptReboot() error {
 		if err := sysupdate.ScheduleRebootAt("*-*-* 04:00:00"); err != nil {
 			return fmt.Errorf("schedule reboot: %w", err)
 		}
-		runner.Log("Reboot scheduled for next 04:00 (systemd-run timer 'lsm-reboot').")
-		runner.Log("To cancel: sudo systemctl stop lsm-reboot.timer lsm-reboot.service")
+		runner.Log("Reboot scheduled for next 04:00 (systemd-run timer 'erp24-reboot').")
+		runner.Log("To cancel: sudo systemctl stop erp24-reboot.timer erp24-reboot.service")
 	case 3:
-		runner.Log("OK — reboot deferred. Reminder: `sudo lsm system reboot` when ready.")
+		runner.Log("OK — reboot deferred. Reminder: `sudo erp24 system reboot` when ready.")
 	}
 	return nil
 }

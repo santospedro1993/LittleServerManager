@@ -1,6 +1,6 @@
 package main
 
-import "lsm/cmd"
+import "erp24/cmd"
 
 // version is injected at build time via -ldflags "-X main.version=..."
 var version = "dev"

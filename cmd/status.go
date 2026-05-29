@@ -10,11 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/runner"
-	"lsm/internal/sysstat"
+	"erp24/internal/runner"
+	"erp24/internal/sysstat"
 )
 
-// statusLive controls whether `lsm status` refreshes continuously or prints once.
+// statusLive controls whether `erp24 status` refreshes continuously or prints once.
 var statusLive bool
 
 var statusCmd = &cobra.Command{
@@ -24,7 +24,7 @@ var statusCmd = &cobra.Command{
 filesystem, and per-NIC network throughput. Pass --live to refresh
 every 2 seconds (Ctrl+C to exit).
 
-Operator-class command: dev24 can run it via 'sudo lsm status'.
+Operator-class command: dev24 can run it via 'sudo erp24 status'.
 
 TODO (post-MVP): per-container view of the same metrics
 (cgroup v2 + docker stats).`,

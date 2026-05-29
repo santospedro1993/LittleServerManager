@@ -5,10 +5,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/prompt"
-	"lsm/internal/runner"
-	"lsm/internal/state"
-	"lsm/internal/ufw"
+	"erp24/internal/prompt"
+	"erp24/internal/runner"
+	"erp24/internal/state"
+	"erp24/internal/ufw"
 )
 
 var addIPCmd = &cobra.Command{
@@ -92,7 +92,7 @@ func currentWhitelist() []string {
 
 func addIP(ip string) error {
 	if !ufw.Installed() {
-		return fmt.Errorf("UFW não instalado — corre 'lsm firewall' primeiro")
+		return fmt.Errorf("UFW não instalado — corre 'erp24 firewall' primeiro")
 	}
 	st, err := state.Load(cfgFile)
 	if err != nil {

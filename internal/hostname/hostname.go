@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 const HostsPath = "/etc/hosts"

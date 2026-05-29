@@ -43,9 +43,9 @@ jobs:
         run: |
           go build -trimpath \
             -ldflags "-s -w -X main.version=${{ inputs.version }}" \
-            -o lsm .
-          file lsm
-          ls -lh lsm
+            -o erp24 .
+          file erp24
+          ls -lh erp24
 
       - name: Build .deb
         env:
@@ -54,36 +54,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          PKG="lsm_${VERSION}_${ARCH}"
+          PKG="erp24_${VERSION}_${ARCH}"
           mkdir -p "$PKG/DEBIAN" \
                    "$PKG/usr/sbin" \
-                   "$PKG/etc/lsm" \
-                   "$PKG/usr/share/doc/lsm"
+                   "$PKG/etc/erp24" \
+                   "$PKG/usr/share/doc/erp24"
 
           # binário
-          install -m 755 lsm "$PKG/usr/sbin/lsm"
+          install -m 755 erp24 "$PKG/usr/sbin/erp24"
 
           # config exemplo (NÃO sobrescreve config.yaml em re-installs)
-          install -m 644 config.example.yaml "$PKG/etc/lsm/config.example.yaml"
+          install -m 644 config.example.yaml "$PKG/etc/erp24/config.example.yaml"
 
           # docs
-          install -m 644 README.md "$PKG/usr/share/doc/lsm/README.md"
+          install -m 644 README.md "$PKG/usr/share/doc/erp24/README.md"
 
           # control
           cat > "$PKG/DEBIAN/control" <<EOF
-          Package: lsm
+          Package: erp24
           Version: ${VERSION}
           Section: admin
           Priority: optional
           Architecture: ${ARCH}
-          Maintainer: lsm maintainers <noreply@example.com>
+          Maintainer: erp24 maintainers <noreply@example.com>
           Depends: systemd
           Recommends: ca-certificates, curl
           Description: Linux Server Manager — Debian server provisioning
-           lsm provisiona servidores Debian de forma idempotente:
+           erp24 provisiona servidores Debian de forma idempotente:
            UFW, SSH hardening, Docker rootless, fail2ban, unattended-upgrades,
            systemd-timesyncd, sysctl, hostname.
-           Corre 'sudo lsm' para o menu interativo ou usa subcomandos
+           Corre 'sudo erp24' para o menu interativo ou usa subcomandos
            (validate, add-ip, remove-ip, ...).
           EOF
 
@@ -95,8 +95,8 @@ jobs:
           ACTION="${1:-configure}"
           OLD_VERSION="${2:-}"
 
-          mkdir -p /etc/lsm
-          chmod 755 /etc/lsm
+          mkdir -p /etc/erp24
+          chmod 755 /etc/erp24
 
           # Os ficheiros do package (binário, config.example.yaml, README) já foram
           # copiados pelo dpkg neste ponto. config.yaml e state.yaml não são
@@ -105,29 +105,29 @@ jobs:
           echo
           echo "============================================"
           if [ -n "$OLD_VERSION" ]; then
-            echo "  lsm atualizado: ${OLD_VERSION} → __VERSION__"
+            echo "  erp24 atualizado: ${OLD_VERSION} → __VERSION__"
           else
-            echo "  lsm instalado (versão __VERSION__)"
+            echo "  erp24 instalado (versão __VERSION__)"
           fi
           echo "============================================"
-          echo "  Binário:    /usr/sbin/lsm"
-          echo "  Config:     /etc/lsm/config.yaml          (preservado em upgrades)"
-          echo "  Exemplo:    /etc/lsm/config.example.yaml  (atualizado p/ esta versão)"
-          echo "  State:      /etc/lsm/state.yaml           (gerido pelo lsm)"
-          echo "  Docs:       /usr/share/doc/lsm/README.md"
+          echo "  Binário:    /usr/sbin/erp24"
+          echo "  Config:     /etc/erp24/config.yaml          (preservado em upgrades)"
+          echo "  Exemplo:    /etc/erp24/config.example.yaml  (atualizado p/ esta versão)"
+          echo "  State:      /etc/erp24/state.yaml           (gerido pelo erp24)"
+          echo "  Docs:       /usr/share/doc/erp24/README.md"
           echo
 
           if [ -n "$OLD_VERSION" ]; then
-            if [ -f /etc/lsm/config.yaml ]; then
+            if [ -f /etc/erp24/config.yaml ]; then
               echo "  Para ver mudanças no schema desde a versão antiga:"
-              echo "    diff /etc/lsm/config.yaml /etc/lsm/config.example.yaml"
+              echo "    diff /etc/erp24/config.yaml /etc/erp24/config.example.yaml"
               echo
               echo "  Validar setup atual:"
-              echo "    sudo lsm validate"
+              echo "    sudo erp24 validate"
             fi
           else
             echo "  Próximo passo:"
-            echo "    sudo lsm   (sem config → wizard arranca automaticamente)"
+            echo "    sudo erp24   (sem config → wizard arranca automaticamente)"
           fi
           echo
           POST
@@ -140,17 +140,17 @@ jobs:
           cat > "$PKG/DEBIAN/prerm" <<'PRERM'
           #!/bin/bash
           set -e
-          # Não removemos /etc/lsm/* — config + state ficam.
-          # Para purga total: sudo apt purge lsm && sudo rm -rf /etc/lsm
+          # Não removemos /etc/erp24/* — config + state ficam.
+          # Para purga total: sudo apt purge erp24 && sudo rm -rf /etc/erp24
           PRERM
           chmod 755 "$PKG/DEBIAN/prerm"
 
           dpkg-deb --build --root-owner-group "$PKG"
           ls -lh "${PKG}.deb"
 
-          # alias versionless → permite URL "releases/latest/download/lsm_<arch>.deb"
-          cp "${PKG}.deb" "lsm_${ARCH}.deb"
-          ls -lh "lsm_${ARCH}.deb"
+          # alias versionless → permite URL "releases/latest/download/erp24_<arch>.deb"
+          cp "${PKG}.deb" "erp24_${ARCH}.deb"
+          ls -lh "erp24_${ARCH}.deb"
 
           # validar
           dpkg-deb --info "${PKG}.deb"
@@ -161,8 +161,8 @@ jobs:
         with:
           name: deb-${{ matrix.arch }}
           path: |
-            lsm_${{ inputs.version }}_${{ matrix.arch }}.deb
-            lsm_${{ matrix.arch }}.deb
+            erp24_${{ inputs.version }}_${{ matrix.arch }}.deb
+            erp24_${{ matrix.arch }}.deb
           retention-days: 7
 
   release:
@@ -199,14 +199,14 @@ jobs:
 
             ```bash
             ARCH=$(dpkg --print-architecture)
-            rm -f lsm_*.deb                       # crítico: senão apt instala o antigo
-            wget -O lsm_${ARCH}.deb \
-              https://github.com/${{ github.repository }}/releases/latest/download/lsm_${ARCH}.deb
-            sudo apt install -y ./lsm_${ARCH}.deb
-            sudo lsm
+            rm -f erp24_*.deb                     # crítico: senão apt instala o antigo
+            wget -O erp24_${ARCH}.deb \
+              https://github.com/${{ github.repository }}/releases/latest/download/erp24_${ARCH}.deb
+            sudo apt install -y ./erp24_${ARCH}.deb
+            sudo erp24
             ```
 
-            > ⚠️ `wget` sem `-O` cria `lsm_amd64.deb.1` quando já existe um download
+            > ⚠️ `wget` sem `-O` cria `erp24_amd64.deb.1` quando já existe um download
             > anterior, e `apt install` instala o **antigo** que ficou em disco.
             > Por isso o `rm -f` + `-O`.
 
@@ -214,10 +214,10 @@ jobs:
 
             ```bash
             ARCH=$(dpkg --print-architecture)
-            rm -f lsm_*.deb
-            wget -O lsm_${{ inputs.version }}_${ARCH}.deb \
-              https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/lsm_${{ inputs.version }}_${ARCH}.deb
-            sudo apt install -y ./lsm_${{ inputs.version }}_${ARCH}.deb
+            rm -f erp24_*.deb
+            wget -O erp24_${{ inputs.version }}_${ARCH}.deb \
+              https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/erp24_${{ inputs.version }}_${ARCH}.deb
+            sudo apt install -y ./erp24_${{ inputs.version }}_${ARCH}.deb
             ```
 
             ## Upgrade
@@ -228,6 +228,6 @@ jobs:
 
             ## Locations
 
-            - Binário: `/usr/sbin/lsm`
-            - Config:  `/etc/lsm/config.yaml`
-            - State:   `/etc/lsm/state.yaml`
+            - Binário: `/usr/sbin/erp24`
+            - Config:  `/etc/erp24/config.yaml`
+            - State:   `/etc/erp24/state.yaml`

@@ -5,12 +5,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/prompt"
-	"lsm/internal/runner"
-	sshmod "lsm/internal/ssh"
-	"lsm/internal/state"
-	"lsm/internal/ufw"
+	"erp24/internal/config"
+	"erp24/internal/prompt"
+	"erp24/internal/runner"
+	sshmod "erp24/internal/ssh"
+	"erp24/internal/state"
+	"erp24/internal/ufw"
 )
 
 var sshCmd = &cobra.Command{
@@ -21,7 +21,7 @@ var sshCmd = &cobra.Command{
 			return err
 		}
 		if !ufw.Installed() {
-			return fmt.Errorf("UFW não instalado. Corre primeiro: lsm firewall")
+			return fmt.Errorf("UFW não instalado. Corre primeiro: erp24 firewall")
 		}
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
@@ -41,7 +41,7 @@ var sshCmd = &cobra.Command{
 		if err := sshmod.CreateUser(cfg.SSH.User, password); err != nil {
 			return err
 		}
-		if err := sshmod.GrantPasswordlessLSM(cfg.SSH.User); err != nil {
+		if err := sshmod.GrantPasswordlessERP24(cfg.SSH.User); err != nil {
 			return err
 		}
 		if err := sshmod.Harden(cfg.SSH.Port); err != nil {
@@ -58,13 +58,44 @@ var sshCmd = &cobra.Command{
 					return err
 				}
 			}
+
+			// Cutover: fechar a regra bootstrap da porta 22. Só aqui, dentro do
+			// branch que abriu a nova porta — garante que a 2210 está permitida
+			// antes de remover a 22 (sem isto, auto_open_ports=false fecharia a
+			// 22 sem nova porta aberta → lockout). sshd já foi recarregado por
+			// Harden (escuta só na nova porta); a sessão atual é uma ligação
+			// estabelecida que sobrevive ao delete da regra UFW. Logins novos
+			// passam a usar a nova porta.
+			if cfg.SSH.Port != 22 && ufw.PortPermitted(cfg.SSH.Port, "tcp") && ufw.PortPermitted(22, "tcp") {
+				if confirmClose22(cfg.SSH.Port) {
+					if err := ufw.DeleteAllow(22, "tcp"); err != nil {
+						return err
+					}
+					runner.Log("UFW: porta 22 (bootstrap) fechada — SSH agora só na %d.", cfg.SSH.Port)
+				} else {
+					runner.Log("Porta 22 mantida. Fecha à mão depois de testar: ufw delete allow 22/tcp")
+				}
+			}
 		}
 
-		runner.Log("Próximo passo: testar SSH na porta %d, depois  ufw delete allow 22/tcp", cfg.SSH.Port)
-		runner.Log("Para restringir por IP: lsm add-ip <IP>")
+		runner.Log("Para restringir por IP: erp24 add-ip <IP>")
 		markInstalled("ssh")
 		return nil
 	},
+}
+
+// confirmClose22 gates closing the port-22 bootstrap rule. Returns true under
+// --yes. The current session survives (established connection), but a misconfig
+// on the new port would block future logins, so we confirm when interactive.
+func confirmClose22(newPort int) bool {
+	if yes {
+		return true
+	}
+	fmt.Println()
+	fmt.Printf("sshd já escuta na porta %d. Posso fechar a porta 22 (bootstrap)?\n", newPort)
+	fmt.Println("  A tua sessão atual sobrevive. Logins novos passam a usar a nova porta.")
+	fmt.Printf("  ⚠ Confirma que consegues ligar na porta %d antes de fechar.\n", newPort)
+	return prompt.Confirm("Fechar porta 22 agora?", true)
 }
 
 func init() { rootCmd.AddCommand(sshCmd) }

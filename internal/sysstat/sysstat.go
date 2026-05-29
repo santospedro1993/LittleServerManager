@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"lsm/internal/runner"
+	"erp24/internal/runner"
 )
 
 // CPUTimes holds the raw cumulative jiffies counters from /proc/stat (cpu line).
@@ -81,8 +81,8 @@ type MemInfo struct {
 	Total, Free, Available, Buffers, Cached, SwapTotal, SwapFree uint64
 }
 
-func (m MemInfo) Used() uint64       { return m.Total - m.Available }
-func (m MemInfo) UsedSwap() uint64   { return m.SwapTotal - m.SwapFree }
+func (m MemInfo) Used() uint64     { return m.Total - m.Available }
+func (m MemInfo) UsedSwap() uint64 { return m.SwapTotal - m.SwapFree }
 func (m MemInfo) UsedPercent() float64 {
 	if m.Total == 0 {
 		return 0
@@ -127,9 +127,9 @@ func ReadMem() (MemInfo, error) {
 
 // DiskUsage represents a single mounted filesystem, totals in bytes.
 type DiskUsage struct {
-	Filesystem string
-	Mount      string
-	FSType     string
+	Filesystem        string
+	Mount             string
+	FSType            string
 	Size, Used, Avail uint64
 	UsedPercent       float64
 }

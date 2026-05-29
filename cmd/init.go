@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/prompt"
+	"erp24/internal/config"
+	"erp24/internal/prompt"
 )
 
 // posixUserRe matches valid Linux usernames per useradd(8) NAME_REGEX:
@@ -19,7 +19,7 @@ import (
 var posixUserRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 // reservedUsers blocks names that ship with Debian or are conventional
-// system accounts. Creating/repurposing any of these via lsm risks
+// system accounts. Creating/repurposing any of these via erp24 risks
 // clobbering passwords or breaking the host (e.g. systemd-* users).
 var reservedUsers = map[string]bool{
 	"root": true, "daemon": true, "bin": true, "sys": true, "sync": true,
@@ -33,7 +33,7 @@ var reservedUsers = map[string]bool{
 // askValidNewUser prompts for a username, looping until the input is a
 // valid POSIX name AND not on the reserved list. If the user already
 // exists on the system, asks for explicit confirmation — re-running the
-// wizard against an existing-but-lsm-managed user is legitimate, but
+// wizard against an existing-but-erp24-managed user is legitimate, but
 // pointing it at an unrelated account would mutate sudo membership and
 // (in CreateUser) skip password setup silently.
 func askValidNewUser(question, def string) string {
@@ -81,7 +81,7 @@ func init() { rootCmd.AddCommand(initCmd) }
 
 // runWizard prompts the user for intent values and writes the config file.
 // Whitelist of IPs is NOT persisted to config — it's derived from UFW state
-// (use `lsm port allow` / `lsm add-ip` after setup). Password for the SSH
+// (use `erp24 port allow` / `erp24 add-ip` after setup). Password for the SSH
 // user is NOT persisted either — it's prompted when the user is created.
 func runWizard() error {
 	fmt.Println("╔════════════════════════════════════════════╗")
@@ -167,6 +167,6 @@ func runWizard() error {
 	fmt.Println()
 	fmt.Println("Notes:")
 	fmt.Println("  • SSH password is requested at user creation time (not stored on disk).")
-	fmt.Println("  • IP whitelist is managed via `lsm port allow` (UFW is the source of truth).")
+	fmt.Println("  • IP whitelist is managed via `erp24 port allow` (UFW is the source of truth).")
 	return nil
 }

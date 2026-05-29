@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/prompt"
-	"lsm/internal/runner"
-	"lsm/internal/state"
+	"erp24/internal/prompt"
+	"erp24/internal/runner"
+	"erp24/internal/state"
 )
 
 var (
@@ -19,15 +19,15 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "lsm",
+	Use:   "erp24",
 	Short: "Linux Server Manager — base setup + ops",
-	Long: `lsm provisions and manages a Debian server: firewall, SSH hardening,
+	Long: `erp24 provisions and manages a Debian server: firewall, SSH hardening,
 Docker engine, fail2ban, unattended-upgrades, timesync, sysctl, hostname.
 Run without args for the interactive menu.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		runner.DryRun = dryRun
-		// Best-effort: ensure /usr/local/bin/lsm wrapper exists so that
-		// non-root users can type plain `lsm` without /usr/sbin in PATH.
+		// Best-effort: ensure /usr/local/bin/erp24 wrapper exists so that
+		// non-root users can type plain `erp24` without /usr/sbin in PATH.
 		// Errors are non-fatal (we may not even be running as root yet).
 		if os.Geteuid() == 0 {
 			ensureShellWrapper()
@@ -53,14 +53,14 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "/etc/lsm/config.yaml", "config file path")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "/etc/erp24/config.yaml", "config file path")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "log actions without executing")
 	rootCmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "auto-confirm prompts")
 }
 
 // RequireAdmin gates destructive operations. Admin = real root, where the
 // invoking user is also root: $SUDO_USER unset OR $SUDO_USER == "root".
-// `sudo lsm <destructive>` from a non-root user (e.g. dev24) is rejected —
+// `sudo erp24 <destructive>` from a non-root user (e.g. dev24) is rejected —
 // those flows must come from a root shell (console / IPMI / `su -` with
 // root password / direct SSH as root). Operator-class commands (validate,
 // system update, system reboot, status, port list, overview) bypass this
@@ -76,23 +76,23 @@ func RequireAdmin() error {
 	return fmt.Errorf("this operation requires direct root login (not via sudo). SUDO_USER=%s. Use the console / IPMI or `su -` with the root password", su)
 }
 
-// ensureShellWrapper drops /usr/local/bin/lsm — a tiny shell wrapper that
+// ensureShellWrapper drops /usr/local/bin/erp24 — a tiny shell wrapper that
 // re-execs the real binary via sudo. Reasoning: the real binary lives in
-// /usr/sbin/lsm (Debian convention for root-only tools), but `/usr/sbin`
+// /usr/sbin/erp24 (Debian convention for root-only tools), but `/usr/sbin`
 // is NOT in a non-root user's default PATH. Without this wrapper, a user
-// like dev24 typing plain `lsm` after a reboot gets "command not found".
+// like dev24 typing plain `erp24` after a reboot gets "command not found".
 //
 // The wrapper is in /usr/local/bin which IS in every user's default PATH.
-// It calls `sudo /usr/sbin/lsm "$@"` — the sudoers drop-in (see
-// internal/ssh.GrantPasswordlessLSM) makes that pass without a prompt for
+// It calls `sudo /usr/sbin/erp24 "$@"` — the sudoers drop-in (see
+// internal/ssh.GrantPasswordlessERP24) makes that pass without a prompt for
 // the configured ssh user. For root invocations it's a no-op (sudo
 // from root doesn't prompt either way).
 //
 // Best-effort + idempotent: writes only if the file is missing or content
 // drifted; errors are swallowed (logged at debug only).
 func ensureShellWrapper() {
-	const path = "/usr/local/bin/lsm"
-	want := "#!/bin/sh\n# Managed by lsm — resolves `lsm` from non-root PATHs.\nexec sudo /usr/sbin/lsm \"$@\"\n"
+	const path = "/usr/local/bin/erp24"
+	want := "#!/bin/sh\n# Managed by erp24 — resolves `erp24` from non-root PATHs.\nexec sudo /usr/sbin/erp24 \"$@\"\n"
 	if cur, err := os.ReadFile(path); err == nil && string(cur) == want {
 		return
 	}

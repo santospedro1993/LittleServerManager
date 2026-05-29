@@ -7,15 +7,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lsm/internal/config"
-	"lsm/internal/fail2ban"
-	"lsm/internal/hostname"
-	"lsm/internal/runner"
-	"lsm/internal/state"
-	"lsm/internal/sysctl"
-	"lsm/internal/timesync"
-	"lsm/internal/ufw"
-	"lsm/internal/upgrades"
+	"erp24/internal/config"
+	"erp24/internal/fail2ban"
+	"erp24/internal/hostname"
+	"erp24/internal/runner"
+	"erp24/internal/state"
+	"erp24/internal/sysctl"
+	"erp24/internal/timesync"
+	"erp24/internal/ufw"
+	"erp24/internal/upgrades"
 )
 
 var validateCmd = &cobra.Command{
@@ -34,7 +34,7 @@ func init() { rootCmd.AddCommand(validateCmd) }
 // "check & fix" flow consumes failedModules to know which modules to re-run.
 func runValidate() (failedModules []string, fail int, err error) {
 	if !config.Exists(cfgFile) {
-		return nil, 0, fmt.Errorf("config not found (%s) — run `lsm init` first", cfgFile)
+		return nil, 0, fmt.Errorf("config not found (%s) — run `erp24 init` first", cfgFile)
 	}
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
@@ -97,7 +97,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 		// the firewall entirely.
 		check("after.rules DOCKER-USER block present", ufw.HasAfterRulesDockerBlock(), "")
 	} else {
-		skip("firewall", "not installed by lsm")
+		skip("firewall", "not installed by erp24")
 	}
 
 	// --- SSH ---
@@ -126,7 +126,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 				ufw.PortPermitted(cfg.SSH.Port, "tcp"), "")
 		}
 	} else {
-		skip("ssh", "not installed by lsm")
+		skip("ssh", "not installed by erp24")
 	}
 
 	// --- Docker ---
@@ -138,13 +138,13 @@ func runValidate() (failedModules []string, fail int, err error) {
 			check("docker.service active", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
 		}
 	} else {
-		skip("docker", "not installed by lsm")
+		skip("docker", "not installed by erp24")
 	}
 
 	// --- Managed ports (whenever UFW is installed) ---
 	// Attribute each port's FAIL to the module that opens it on re-run,
 	// so "Check & Fix" knows what to re-execute. User-added ports
-	// (`lsm port add`) have no owner — those FAILs surface but won't
+	// (`erp24 port add`) have no owner — those FAILs surface but won't
 	// trigger an auto-fix (re-running port add isn't idempotent enough
 	// to do silently).
 	if ufw.Installed() {
@@ -186,7 +186,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 			}
 		}
 	} else {
-		skip("fail2ban", "not installed by lsm")
+		skip("fail2ban", "not installed by erp24")
 	}
 
 	// --- unattended-upgrades ---
@@ -198,7 +198,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 			check("unattended-upgrades enabled", strings.TrimSpace(out) == "enabled", strings.TrimSpace(out))
 		}
 	} else {
-		skip("upgrades", "not installed by lsm")
+		skip("upgrades", "not installed by erp24")
 	}
 
 	// --- timesync ---
@@ -221,7 +221,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 		check(fmt.Sprintf("Timezone = %s", cfg.Timezone),
 			curTZ == cfg.Timezone, "current: "+curTZ)
 	} else {
-		skip("timesync", "not installed by lsm")
+		skip("timesync", "not installed by erp24")
 	}
 
 	// --- sysctl ---
@@ -238,7 +238,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 			check(fmt.Sprintf("sysctl %s = %s", key, want), got == want, "current: "+got)
 		}
 	} else {
-		skip("sysctl", "not installed by lsm")
+		skip("sysctl", "not installed by erp24")
 	}
 
 	// --- hostname ---
@@ -247,7 +247,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 		cur, _ := hostname.Current()
 		check(fmt.Sprintf("hostname = %s", cfg.Hostname), cur == cfg.Hostname, "current: "+cur)
 	} else if cfg.Hostname != "" {
-		skip("hostname", "configured but not applied by lsm")
+		skip("hostname", "configured but not applied by erp24")
 	}
 
 	fmt.Println()
@@ -263,7 +263,7 @@ func runValidate() (failedModules []string, fail int, err error) {
 }
 
 // portOwnerModule returns the module that re-applies a given port's UFW
-// rule when run. Empty string = user-managed port (e.g. `lsm port add`),
+// rule when run. Empty string = user-managed port (e.g. `erp24 port add`),
 // which has no auto-fix path. Extend this when adding modules that
 // register their own managed ports (wireguard, etc).
 func portOwnerModule(port int, proto string, cfg *config.Config) string {

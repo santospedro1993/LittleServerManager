@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"lsm/internal/docker"
-	"lsm/internal/runner"
+	"erp24/internal/docker"
+	"erp24/internal/runner"
 )
 
 var dockerCmd = &cobra.Command{

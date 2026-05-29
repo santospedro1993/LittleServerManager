@@ -1,7 +1,7 @@
 # --- Build artifacts ---
-/lsm
-/lsm-*
-/lsm_*
+/erp24
+/erp24-*
+/erp24_*
 *.deb
 dist/
 build/

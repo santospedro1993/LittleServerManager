@@ -3,9 +3,9 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"lsm/internal/runner"
-	"lsm/internal/state"
-	"lsm/internal/ufw"
+	"erp24/internal/runner"
+	"erp24/internal/state"
+	"erp24/internal/ufw"
 )
 
 var firewallCmd = &cobra.Command{
@@ -44,7 +44,7 @@ var firewallCmd = &cobra.Command{
 			return err
 		}
 
-		// DOCKER-USER patch in after.rules. This is what makes `lsm port`
+		// DOCKER-USER patch in after.rules. This is what makes `erp24 port`
 		// rules apply to docker-published ports — without it, `docker run
 		// -p` bypasses UFW entirely. We install the block unconditionally
 		// (cheap, idempotent, harmless on hosts without docker because the
