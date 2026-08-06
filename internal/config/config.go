@@ -21,9 +21,10 @@ type Config struct {
 	Timezone      string        `yaml:"timezone"`
 	Hostname      string        `yaml:"hostname,omitempty"`
 	FQDN          string        `yaml:"fqdn,omitempty"`
-	SSH           SSHConfig     `yaml:"ssh"`
-	Network       NetworkConfig `yaml:"network"`
-	Modules       ModulesConfig `yaml:"modules"`
+	SSH           SSHConfig      `yaml:"ssh"`
+	Network       NetworkConfig  `yaml:"network"`
+	Sentinel      SentinelConfig `yaml:"sentinel,omitempty"`
+	Modules       ModulesConfig  `yaml:"modules"`
 
 	path string `yaml:"-"`
 }
@@ -41,11 +42,22 @@ type ModulesConfig struct {
 	Docker   bool `yaml:"docker"`
 	Fail2ban bool `yaml:"fail2ban"`
 	Upgrades bool `yaml:"upgrades"`
+	// Sentinel is opt-in like Docker. Unlike the baseline modules it stays
+	// false on legacy (schema v0) configs — a pre-existing install must not
+	// silently enrol an agent (that needs an operator-issued install key).
+	Sentinel bool `yaml:"sentinel"`
 }
 
 type SSHConfig struct {
 	Port int    `yaml:"port"`
 	User string `yaml:"user"`
+}
+
+// SentinelConfig holds the Sentinel monitoring agent settings. Only the central
+// URL lives here (plain intent). The install key is a runtime secret and the
+// agent token lives in /etc/sentinel/agent.toml — neither is ever in this file.
+type SentinelConfig struct {
+	CentralURL string `yaml:"central_url,omitempty"`
 }
 
 type NetworkConfig struct {

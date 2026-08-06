@@ -11,6 +11,7 @@ import (
 	"erp24/internal/fail2ban"
 	"erp24/internal/hostname"
 	"erp24/internal/runner"
+	"erp24/internal/sentinel"
 	"erp24/internal/state"
 	"erp24/internal/sysctl"
 	"erp24/internal/timesync"
@@ -139,6 +140,17 @@ func runValidate() (failedModules []string, fail int, err error) {
 		}
 	} else {
 		skip("docker", "not installed by erp24")
+	}
+
+	// --- Sentinel monitoring agent ---
+	currentModule = "sentinel"
+	if st.IsInstalled("sentinel") {
+		check("sentinel-agent installed", sentinel.Installed(), "")
+		check("agent.toml present", sentinel.Registered(), "")
+		out, _ := runner.Capture("systemctl", "is-active", "sentinel-agent.service")
+		check("sentinel-agent.service active", strings.TrimSpace(out) == "active", strings.TrimSpace(out))
+	} else {
+		skip("sentinel", "not installed by erp24")
 	}
 
 	// --- Managed ports (whenever UFW is installed) ---
@@ -285,5 +297,6 @@ func moduleRunners() map[string]func() error {
 		"timesync": func() error { return timesyncCmd.RunE(timesyncCmd, nil) },
 		"sysctl":   func() error { return sysctlCmd.RunE(sysctlCmd, nil) },
 		"hostname": func() error { return hostnameCmd.RunE(hostnameCmd, nil) },
+		"sentinel": func() error { return sentinelCmd.RunE(sentinelCmd, nil) },
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"erp24/internal/config"
 	"erp24/internal/prompt"
+	"erp24/internal/sentinel"
 )
 
 // posixUserRe matches valid Linux usernames per useradd(8) NAME_REGEX:
@@ -155,6 +156,14 @@ func runWizard() error {
 
 	// Opt-in modules (ask one by one — extend this block when adding new ones).
 	c.Modules.Docker = prompt.Confirm("Install docker engine (rootful daemon)?", true)
+
+	// Sentinel monitoring agent. Pull-only (no ports opened). The install key
+	// is asked at install time (secret), not here — only the central URL is
+	// stored. Default off.
+	c.Modules.Sentinel = prompt.Confirm("Install Sentinel monitoring agent?", false)
+	if c.Modules.Sentinel {
+		c.Sentinel.CentralURL = prompt.Ask("Sentinel central URL", sentinel.DefaultCentralURL)
+	}
 
 	c.SetPath(cfgFile)
 	if err := os.MkdirAll(filepath.Dir(cfgFile), 0755); err != nil {

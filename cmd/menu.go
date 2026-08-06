@@ -307,6 +307,7 @@ func modulesMenu() error {
 			"timesync",
 			"sysctl",
 			"hostname",
+			"sentinel",
 			"all",
 		}, true, false)
 		if idx == prompt.ChoiceBack {
@@ -332,6 +333,8 @@ func modulesMenu() error {
 		case 8:
 			err = hostnameCmd.RunE(hostnameCmd, nil)
 		case 9:
+			err = sentinelCmd.RunE(sentinelCmd, nil)
+		case 10:
 			err = runAllModules()
 		}
 		if err != nil {
@@ -566,6 +569,8 @@ func runAllModules() error {
 		{"docker", cfg.Modules.Docker, func() error { return dockerCmd.RunE(dockerCmd, nil) }},
 		{"fail2ban", cfg.Modules.Fail2ban, func() error { return fail2banCmd.RunE(fail2banCmd, nil) }},
 		{"upgrades", cfg.Modules.Upgrades, func() error { return upgradesCmd.RunE(upgradesCmd, nil) }},
+		// after docker so container metrics work out of the box.
+		{"sentinel", cfg.Modules.Sentinel, func() error { return sentinelCmd.RunE(sentinelCmd, nil) }},
 	}
 	for _, m := range mods {
 		if !m.enabled {

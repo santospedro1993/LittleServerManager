@@ -42,8 +42,16 @@ Run without args for the interactive menu.`,
 	SilenceErrors: false,
 }
 
+// appVersion mirrors rootCmd.Version but as a plain package var, so commands
+// can read the build version without their initializer referring to rootCmd
+// (which would form an init cycle: rootCmd → runMenu → … → cmd → rootCmd).
+var appVersion = "dev"
+
 // SetVersion is called from main with the version injected at build time.
-func SetVersion(v string) { rootCmd.Version = v }
+func SetVersion(v string) {
+	appVersion = v
+	rootCmd.Version = v
+}
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {

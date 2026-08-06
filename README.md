@@ -99,7 +99,7 @@ sudo erp24
 2. **Wizard** pergunta valores: timezone (default `Etc/UTC`), hostname, SSH
    user/port, política `auto_open_ports`. Modules baseline (firewall, ssh,
    sysctl, timesync, hostname, fail2ban, upgrades) são sempre instalados;
-   **só docker é opt-in**.
+   **docker e sentinel são opt-in**.
 3. **Password** do user SSH é pedida em runtime (`stty -echo` +
    double-prompt). Não fica em ficheiro.
 4. Corre módulos selecionados.
@@ -229,6 +229,10 @@ modules:
   fail2ban: true   # baseline
   upgrades: true   # baseline
   docker: true     # opt-in via wizard
+  sentinel: false  # opt-in via wizard (Sentinel monitoring agent)
+
+sentinel:
+  central_url: https://sentinel.erp24.pt   # só usado se modules.sentinel: true
 ```
 
 ---
@@ -261,6 +265,7 @@ modules:
 | `erp24 firewall` | UFW: install, defaults deny/allow, abre 22 (bootstrap só na 1ª vez) |
 | `erp24 ssh` | Cria user (pede password), drop-in `sshd_config.d/99-erp24.conf`, abre porta UFW |
 | `erp24 docker` | Instala Docker CE (engine + cli + containerd + buildx + compose plugin) e `systemctl enable --now docker.service`. Daemon corre como root. |
+| `erp24 sentinel` | Instala + regista o agente de monitorização Sentinel (pull-only, não abre portas). Pede a *install key* em runtime |
 | `erp24 fail2ban` | jail.local com `port=ssh.port` + ignoreip lido do UFW |
 | `erp24 upgrades` | unattended-upgrades + periodic config |
 | `erp24 timesync` | systemd-timesyncd + timezone |
@@ -327,6 +332,24 @@ filtra por subcmd em-app. Operações destrutivas precisam de root login
 - Instala Docker CE oficial via repo apt: `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`.
 - `systemctl enable --now docker.service` — daemon rootful, socket em `/var/run/docker.sock` (só root).
 - **Não** cria user dedicado nem adiciona ninguém ao grupo `docker` (= root). Containers correm via root login / `sudo -i`.
+
+### sentinel
+Opt-in (como docker). Instala o **agente de monitorização Sentinel** e regista o
+host num dashboard central. É **pull-only**: o agente só faz saída HTTPS para a
+central e **não abre nenhuma porta** no servidor (por isso este módulo não mexe no UFW).
+
+- Deteta a arquitetura (amd64/arm64) e descarrega `<central>/downloads/sentinel-agent[-arm64].deb`,
+  instalando-o via apt (o `.deb` traz o binário, o unit systemd e os diretórios).
+- Se `/etc/sentinel/agent.toml` **não** existir, pede a **install key** (que copias do
+  dashboard → *Install keys*), chama `POST <central>/api/agents/register`, recebe o
+  *agent token* e escreve `/etc/sentinel/agent.toml` (0600).
+- `systemctl enable --now sentinel-agent.service`.
+- **Idempotente**: se o host já estiver registado (`agent.toml` existe), não volta a
+  pedir key nem a registar — só garante o serviço ligado (nunca gasta uma segunda key).
+- A `sentinel.central_url` vive no `config.yaml` (intenção). A install key é um segredo
+  de runtime e o agent token fica no `agent.toml` — nenhum dos dois entra no `config.yaml`.
+- Docker é opcional: se o módulo `docker` estiver instalado, o agente reporta métricas
+  de containers automaticamente (lê `/var/run/docker.sock`).
 
 ### fail2ban
 - `apt install fail2ban`.
