@@ -1,0 +1,50 @@
+# nfpm — empacotamento .deb do erp24 (substitui o dpkg-deb inline do antigo
+# .github/workflows/release.yml). nfpm é Go puro, por isso o .mypublisher/producao.yml
+# consegue gerar os pacotes localmente (Mac/Linux) sem precisar de dpkg no host.
+#
+# ARCH e VERSION vêm do env (o producao.yml corre um loop amd64/arm64 e chama
+# `VERSION=... ARCH=... nfpm pkg --packager deb`).
+name: erp24
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: admin
+priority: optional
+maintainer: ERP24 <pedro.santos@erp24.pt>
+description: |
+  Linux Server Manager — idempotent Debian server provisioning.
+  UFW firewall, SSH hardening, Docker CE, fail2ban, unattended-upgrades,
+  systemd-timesyncd, sysctl and hostname — a single Go binary.
+  Run `sudo erp24` for the interactive menu or use subcommands
+  (validate, add-ip, remove-ip, ...).
+homepage: https://github.com/santospedro1993/LittleServerManager
+license: MIT
+
+depends:
+  - systemd
+recommends:
+  - ca-certificates
+  - curl
+
+contents:
+  # Binário real — /usr/sbin (convenção Debian para tools que precisam de root).
+  - src: ./bin/erp24
+    dst: /usr/sbin/erp24
+    file_info:
+      mode: 0755
+
+  # Config exemplo (template). NÃO é conffile de propósito: deve ser atualizado a
+  # cada upgrade para refletir o schema novo. O config.yaml real é criado em runtime
+  # pelo wizard e nunca entra no pacote → preservado em upgrades.
+  - src: ./config.example.yaml
+    dst: /etc/erp24/config.example.yaml
+    file_info:
+      mode: 0644
+
+  - src: ./README.md
+    dst: /usr/share/doc/erp24/README.md
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/postinstall.sh

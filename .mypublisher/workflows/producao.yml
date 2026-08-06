@@ -1,0 +1,69 @@
+# erp24 (LittleServerManager) — produção. Equivalente ao antigo
+# .github/workflows/release.yml, mas corrido localmente pelo MyPublisher em vez de
+# esperar por um runner do GitHub.
+#
+# Este projeto NÃO publica imagem Docker: cross-compila o binário Go (amd64 + arm64),
+# empacota cada um em .deb com nfpm e anexa os pacotes à GitHub Release. A tag e a
+# Release só se criam depois de o build correr bem.
+name: Produção
+description: Compila o erp24 (amd64 + arm64), empacota os .deb com nfpm e publica a git tag + a Release com os pacotes anexados.
+
+on:
+  branches: [master]
+
+steps:
+  - id: version
+    uses: version/resolve
+    with:
+      # input → a UI mostra o campo "Versão" já preenchido com o próximo patch
+      # sugerido; aceita-se num clique (patch) ou escreve-se outro (minor/major).
+      source: input
+
+  # Cross-compila o binário Go (estático, CGO off) para amd64 + arm64 e empacota cada
+  # um em .deb com nfpm (Go puro → corre no Mac sem dpkg). Para cada arch escreve o
+  # pacote versionado (erp24_<versão>_<arch>.deb) e um alias sem versão
+  # (erp24_<arch>.deb) que alimenta as URLs "releases/latest/download/erp24_<arch>.deb"
+  # do README. nfpm é instalado via `go install` se faltar no host.
+  # shell: sh porque o script é POSIX (no Windows correria no Git Bash/MSYS — daí o cygpath).
+  - id: build
+    uses: shell/run
+    with:
+      shell: sh
+      env:
+        VERSION: ${{ version }}
+      run: |
+        set -e
+        mkdir -p bin dist
+        # Runs locais reutilizam a working tree → limpa artefactos de versões anteriores.
+        rm -f bin/* dist/*
+        command -v nfpm >/dev/null 2>&1 || go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+        GOPATH_BIN="$(go env GOPATH)/bin"
+        command -v cygpath >/dev/null 2>&1 && GOPATH_BIN="$(cygpath -u "$GOPATH_BIN")"
+        export PATH="$PATH:$GOPATH_BIN"
+        for ARCH in amd64 arm64; do
+          CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath \
+            -ldflags "-s -w -X main.version=$VERSION" -o bin/erp24 .
+          VERSION="$VERSION" ARCH="$ARCH" nfpm pkg --packager deb \
+            --target "./dist/erp24_${VERSION}_${ARCH}.deb"
+          # alias sem versão para as URLs "latest" do README
+          cp "dist/erp24_${VERSION}_${ARCH}.deb" "dist/erp24_${ARCH}.deb"
+        done
+        ls -la dist/
+
+  - id: tag
+    uses: git/tag
+    with:
+      connection: github
+      # tag sem prefixo "v" (as tags v* antigas ficam no histórico)
+      name: ${{ version }}
+      push: true
+
+  # Anexa os 4 .deb à Release (2 versionados + 2 aliases sem versão).
+  - id: release
+    uses: github/release
+    with:
+      connection: github
+      tag: ${{ version }}
+      notes: auto
+      files:
+        - dist/erp24_*.deb

@@ -3,6 +3,7 @@
 /erp24-*
 /erp24_*
 *.deb
+bin/
 dist/
 build/
 
