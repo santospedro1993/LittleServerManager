@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Ficheiros que correm em Linux (maintainer scripts do .deb/.rpm, units systemd,
+# installers). Forçar LF SEMPRE — mesmo em checkout no Windows (autocrlf). Sem isto
+# o build em Windows (MyPublisher/Git Bash) empacota-os com CRLF e o postinst do .deb
+# rebenta no Debian com "No such file or directory" (o shebang fica #!/bin/sh\r).
+*.sh      text eol=lf
+*.service text eol=lf

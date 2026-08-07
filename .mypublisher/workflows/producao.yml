@@ -36,6 +36,14 @@ steps:
         mkdir -p bin dist
         # Runs locais reutilizam a working tree → limpa artefactos de versões anteriores.
         rm -f bin/* dist/*
+        # Rede de segurança CRLF: se a working tree foi feita checkout em Windows
+        # (autocrlf), o postinstall.sh vem com CRLF e o nfpm empacota-o tal e qual →
+        # o postinst do .deb fica #!/bin/bash\r → "No such file or directory" no Debian.
+        # O .gitattributes (*.sh eol=lf) já trata disto na fonte; isto é cinto-e-
+        # suspensórios, portável (tr) quer o host seja Windows quer Mac.
+        for f in packaging/*.sh; do
+          if [ -f "$f" ]; then tr -d '\r' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi
+        done
         command -v nfpm >/dev/null 2>&1 || go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
         GOPATH_BIN="$(go env GOPATH)/bin"
         command -v cygpath >/dev/null 2>&1 && GOPATH_BIN="$(cygpath -u "$GOPATH_BIN")"
