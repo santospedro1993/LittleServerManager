@@ -24,14 +24,14 @@ func RemoveConflicts() error {
 		return nil
 	}
 	for _, p := range conflicting {
-		runner.TryRun("apt-get", "remove", "-y", p)
+		runner.TryAptGet("remove", "-y", p)
 	}
-	runner.TryRun("apt-get", "autoremove", "-y", "-qq")
+	runner.TryAptGet("autoremove", "-y", "-qq")
 	return nil
 }
 
 func InstallRepo() error {
-	if err := runner.Run("apt-get", "install", "-y", "-qq", "ca-certificates", "curl"); err != nil {
+	if err := runner.AptGet("install", "-y", "-qq", "ca-certificates", "curl"); err != nil {
 		return err
 	}
 	if err := runner.Run("install", "-m", "0755", "-d", "/etc/apt/keyrings"); err != nil {
@@ -64,10 +64,10 @@ func InstallRepo() error {
 }
 
 func InstallEngine() error {
-	if err := runner.Run("apt-get", "update", "-qq"); err != nil {
+	if err := runner.AptGet("update", "-qq"); err != nil {
 		return err
 	}
-	return runner.Run("apt-get", "install", "-y", "-qq",
+	return runner.AptGet("install", "-y", "-qq",
 		"docker-ce", "docker-ce-cli", "containerd.io",
 		"docker-buildx-plugin", "docker-compose-plugin")
 }

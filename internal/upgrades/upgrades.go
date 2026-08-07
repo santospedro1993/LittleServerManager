@@ -15,10 +15,10 @@ func Installed() bool {
 
 func Install() error {
 	runner.Log("Garantir unattended-upgrades + apt-listchanges instalados...")
-	if err := runner.Run("apt-get", "update", "-qq"); err != nil {
+	if err := runner.AptGet("update", "-qq"); err != nil {
 		return err
 	}
-	return runner.Run("apt-get", "install", "-y", "-qq",
+	return runner.AptGet("install", "-y", "-qq",
 		"unattended-upgrades", "apt-listchanges")
 }
 

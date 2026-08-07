@@ -76,6 +76,38 @@ func TryRun(name string, args ...string) {
 	_ = Run(name, args...)
 }
 
+// aptLockTimeout (segundos) é quanto o apt espera pelos locks do dpkg/apt
+// antes de desistir. Num Debian acabado de arrancar, o apt-daily /
+// unattended-upgrades corre sozinho e prende /var/lib/dpkg/lock-frontend;
+// sem isto, as nossas chamadas apt morriam logo com "Could not get lock ...
+// exit status 100". 300s deixa o trabalho de fundo terminar primeiro.
+// Requer apt >= 1.9.11 (Debian 11+).
+const aptLockTimeout = "300"
+
+// aptEnv mantém o apt totalmente não-interativo e impede o diálogo do
+// needrestart ("Which services should be restarted?"). Antes só o módulo
+// sysupdate aplicava isto; agora todo o apt do erp24 passa por aqui.
+var aptEnv = map[string]string{
+	"DEBIAN_FRONTEND":          "noninteractive",
+	"NEEDRESTART_MODE":         "l",
+	"NEEDRESTART_SUSPEND":      "1",
+	"APT_LISTCHANGES_FRONTEND": "none",
+}
+
+// AptGet corre apt-get com espera-por-lock e ambiente não-interativo, para
+// que um apt-daily/unattended-upgrades a decorrer não nos faça falhar. Todas
+// as operações apt dos módulos devem passar por aqui.
+func AptGet(args ...string) error {
+	full := append([]string{"-o", "DPkg::Lock::Timeout=" + aptLockTimeout}, args...)
+	return RunEnv(aptEnv, "apt-get", full...)
+}
+
+// TryAptGet é o AptGet mas ignora o erro (ex.: remover um pacote que pode
+// não estar instalado).
+func TryAptGet(args ...string) {
+	_ = AptGet(args...)
+}
+
 // RunEnv is like Run but sets extra env vars on top of the inherited environment.
 func RunEnv(env map[string]string, name string, args ...string) error {
 	line := name + " " + strings.Join(args, " ")

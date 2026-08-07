@@ -140,7 +140,7 @@ func installPackage(central string) error {
 	if err := runner.Run("curl", "-fsSL", "-o", tmp, url); err != nil {
 		return fmt.Errorf("download %s: %w", url, err)
 	}
-	if err := runner.Run("apt-get", "install", "-y", tmp); err != nil {
+	if err := runner.AptGet("install", "-y", tmp); err != nil {
 		return err
 	}
 	runner.TryRun("rm", "-f", tmp)

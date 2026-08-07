@@ -12,10 +12,10 @@ func Installed() bool { return runner.HasCommand("fail2ban-server") }
 
 func Install() error {
 	runner.Log("Garantir fail2ban instalado...")
-	if err := runner.Run("apt-get", "update", "-qq"); err != nil {
+	if err := runner.AptGet("update", "-qq"); err != nil {
 		return err
 	}
-	return runner.Run("apt-get", "install", "-y", "-qq", "fail2ban")
+	return runner.AptGet("install", "-y", "-qq", "fail2ban")
 }
 
 // WriteJailConfig writes /etc/fail2ban/jail.local with sshd jail tuned to sshPort.

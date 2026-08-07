@@ -156,17 +156,10 @@ func RebootRequired() (bool, []string) {
 	return true, pkgs
 }
 
+// aptGet delega no helper central do runner (espera-por-lock + ambiente
+// não-interativo + supressão do diálogo needrestart). O drop-in em
+// /etc/needrestart/conf.d/99-erp24.conf é a garantia durável; as env vars do
+// helper são o belt-and-braces para o primeiro arranque, antes do drop-in.
 func aptGet(args ...string) error {
-	full := append([]string{"apt-get"}, args...)
-	return runner.RunEnv(map[string]string{
-		"DEBIAN_FRONTEND": "noninteractive",
-		// NEEDRESTART_MODE=l + NEEDRESTART_SUSPEND=1 keep the apt hook from
-		// ever showing the "Which services should be restarted?" dialog.
-		// The drop-in at /etc/needrestart/conf.d/99-erp24.conf is the durable
-		// guarantee; these env vars are belt-and-braces for the first run
-		// before the drop-in lands.
-		"NEEDRESTART_MODE":         "l",
-		"NEEDRESTART_SUSPEND":      "1",
-		"APT_LISTCHANGES_FRONTEND": "none",
-	}, full[0], full[1:]...)
+	return runner.AptGet(args...)
 }

@@ -16,10 +16,10 @@ func Install() error {
 		return nil
 	}
 	runner.Log("UFW não instalado — a instalar...")
-	if err := runner.Run("apt-get", "update", "-qq"); err != nil {
+	if err := runner.AptGet("update", "-qq"); err != nil {
 		return err
 	}
-	return runner.Run("apt-get", "install", "-y", "-qq", "ufw")
+	return runner.AptGet("install", "-y", "-qq", "ufw")
 }
 
 func SetDefaults() error {
