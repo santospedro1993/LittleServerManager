@@ -232,7 +232,7 @@ modules:
   sentinel: false  # opt-in via wizard (Sentinel monitoring agent)
 
 sentinel:
-  central_url: https://sentinel.erp24.pt   # só usado se modules.sentinel: true
+  central_url: https://cc.erp24.pt   # só usado se modules.sentinel: true
 ```
 
 ---

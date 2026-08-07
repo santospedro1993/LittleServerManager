@@ -20,6 +20,23 @@ func TestTomlStrEscaping(t *testing.T) {
 	}
 }
 
+func TestNormalizeCentral(t *testing.T) {
+	cases := map[string]string{
+		"cc.erp24.pt":          "https://cc.erp24.pt",
+		"cc.erp24.pt/":         "https://cc.erp24.pt",
+		"  cc.erp24.pt  ":      "https://cc.erp24.pt",
+		"https://cc.erp24.pt":  "https://cc.erp24.pt",
+		"https://cc.erp24.pt/": "https://cc.erp24.pt",
+		"http://box.lan:8080":  "http://box.lan:8080", // explicit http respected
+		"":                     "",
+	}
+	for in, want := range cases {
+		if got := NormalizeCentral(in); got != want {
+			t.Errorf("NormalizeCentral(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestRenderAgentConfig(t *testing.T) {
 	resp := &registerResponse{
 		AgentID:                  "ag_123",

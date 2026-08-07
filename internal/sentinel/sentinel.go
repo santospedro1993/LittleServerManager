@@ -38,7 +38,7 @@ import (
 
 // DefaultCentralURL matches the sentinel-installer default so operators see the
 // same suggestion they'd get running the agent's own installer.
-const DefaultCentralURL = "https://sentinel.erp24.pt"
+const DefaultCentralURL = "https://cc.erp24.pt"
 
 const (
 	agentBinPath    = "/usr/local/bin/sentinel-agent"
@@ -57,13 +57,26 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// NormalizeCentral cleans an operator-supplied central URL: it trims surrounding
+// whitespace and any trailing slash and — because the dashboard is always served
+// over HTTPS — prepends https:// when the operator typed a bare host with no
+// scheme (e.g. "cc.erp24.pt" → "https://cc.erp24.pt"). An explicit http:// or
+// https:// the operator wrote is left untouched. Empty in stays empty out.
+func NormalizeCentral(s string) string {
+	s = strings.TrimSpace(s)
+	if s != "" && !strings.Contains(s, "://") {
+		s = "https://" + s
+	}
+	return strings.TrimRight(s, "/")
+}
+
 // Run installs the agent and enrols the host. central may be empty — the
 // operator is then prompted (defaulting to DefaultCentralURL). provisioner is
 // the erp24 version, sent as the initial agent_version to mark provenance.
 func Run(central, provisioner string) error {
-	central = strings.TrimRight(strings.TrimSpace(central), "/")
+	central = NormalizeCentral(central)
 	if central == "" {
-		central = strings.TrimRight(strings.TrimSpace(prompt.Ask("Sentinel central URL", DefaultCentralURL)), "/")
+		central = NormalizeCentral(prompt.Ask("Sentinel central URL", DefaultCentralURL))
 	}
 	if central == "" {
 		return fmt.Errorf("sentinel: central URL is required")

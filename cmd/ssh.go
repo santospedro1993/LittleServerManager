@@ -36,7 +36,7 @@ var sshCmd = &cobra.Command{
 
 		var password string
 		if !sshmod.UserExists(cfg.SSH.User) {
-			password = prompt.AskPassword(fmt.Sprintf("Password p/ novo user '%s'", cfg.SSH.User))
+			password = prompt.AskNewPassword(fmt.Sprintf("Password p/ novo user '%s':", cfg.SSH.User))
 		}
 		if err := sshmod.CreateUser(cfg.SSH.User, password); err != nil {
 			return err

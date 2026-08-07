@@ -30,12 +30,32 @@ func runMenu() error {
 	for {
 		printHeader(admin)
 
+		// Flag an interrupted setup: modules enabled in config but not yet
+		// recorded as installed. Cheap to recompute each loop and it makes
+		// "something's missing after I cancelled" answerable at a glance.
+		var pending []string
+		if cfg, err := config.Load(cfgFile); err == nil {
+			if st, err := state.Load(cfgFile); err == nil {
+				pending = pendingModules(cfg, st)
+			}
+		}
+		if len(pending) > 0 {
+			fmt.Printf("⚠ Setup incompleto — %d módulo(s) por aplicar: %s\n",
+				len(pending), strings.Join(pending, ", "))
+		}
+
 		var labels []string
 		var actions []func() (ran bool, err error)
 
 		// always-available
 		labels = append(labels, "Status")
 		actions = append(actions, wrapSub(statusMenu))
+
+		// Surface a one-key "finish it" when a prior run left modules pending.
+		if admin && len(pending) > 0 {
+			labels = append(labels, fmt.Sprintf("Terminar setup (%d pendente(s))", len(pending)))
+			actions = append(actions, wrap(runAllModules))
+		}
 
 		// Validate runs the full check; if anything failed AND caller is
 		// admin, offers to re-run the failing modules. Operator-class
@@ -581,5 +601,47 @@ func runAllModules() error {
 			return fmt.Errorf("%s: %w", m.name, err)
 		}
 	}
+
+	// Summary so a resumed/interrupted run makes it obvious nothing was
+	// silently skipped: each enabled module is [ok] (recorded installed) or
+	// [pending] (still to do).
+	if st, err := state.Load(cfgFile); err == nil {
+		fmt.Println("\n─── Setup summary ───────────────────────────")
+		for _, m := range mods {
+			switch {
+			case !m.enabled:
+				fmt.Printf("  [skip]    %s\n", m.name)
+			case st.IsInstalled(m.name):
+				fmt.Printf("  [ok]      %s\n", m.name)
+			default:
+				fmt.Printf("  [pending] %s\n", m.name)
+			}
+		}
+	}
 	return nil
+}
+
+// pendingModules returns the modules enabled in config but not yet recorded as
+// installed in state, in run order. An empty result means setup is complete.
+func pendingModules(cfg *config.Config, st *state.State) []string {
+	enabled := map[string]bool{
+		"firewall": cfg.Modules.Firewall,
+		"ssh":      cfg.Modules.SSH,
+		"timesync": cfg.Modules.Timesync,
+		"sysctl":   cfg.Modules.Sysctl,
+		"hostname": cfg.Modules.Hostname && cfg.Hostname != "",
+		"docker":   cfg.Modules.Docker,
+		"fail2ban": cfg.Modules.Fail2ban,
+		"upgrades": cfg.Modules.Upgrades,
+		"sentinel": cfg.Modules.Sentinel,
+	}
+	// Fixed run order (map iteration is random) so the list reads predictably.
+	order := []string{"firewall", "ssh", "timesync", "sysctl", "hostname", "docker", "fail2ban", "upgrades", "sentinel"}
+	var pending []string
+	for _, name := range order {
+		if enabled[name] && !st.IsInstalled(name) {
+			pending = append(pending, name)
+		}
+	}
+	return pending
 }

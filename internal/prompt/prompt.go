@@ -2,7 +2,9 @@ package prompt
 
 import (
 	"bufio"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -108,6 +110,70 @@ func ChooseEx(question string, options []string, withBack, withExit bool) int {
 			return n
 		}
 		fmt.Println("Invalid option.")
+	}
+}
+
+// randomPasswordAlphabet excludes visually ambiguous characters (0/O, 1/l/I) so
+// a generated password can be read off the screen and retyped without mistakes.
+const randomPasswordAlphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789@#%+=?"
+
+// RandomPassword returns a cryptographically-random password n characters long
+// drawn from an unambiguous alphabet. n<=0 defaults to 20.
+func RandomPassword(n int) (string, error) {
+	if n <= 0 {
+		n = 20
+	}
+	b := make([]byte, n)
+	max := big.NewInt(int64(len(randomPasswordAlphabet)))
+	for i := range b {
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		b[i] = randomPasswordAlphabet[idx.Int64()]
+	}
+	return string(b), nil
+}
+
+// AskNewPassword prompts for a NEW account password. Pressing Enter with no input
+// generates a strong random password and prints it once (the recommended
+// default), so the operator can save it. A typed password is confirmed twice to
+// catch typos, exactly like AskPassword.
+func AskNewPassword(question string) string {
+	fmt.Println(question)
+	fmt.Println("  Enter (vazio) = gerar uma password forte aleatória (recomendado).")
+	for {
+		fmt.Print("Password: ")
+		_ = exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+		pw1 := read()
+		_ = exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+		fmt.Println()
+
+		if pw1 == "" {
+			gen, err := RandomPassword(20)
+			if err != nil {
+				fmt.Println("Falha a gerar password aleatória — escreve uma à mão.")
+				continue
+			}
+			fmt.Println()
+			fmt.Println("  ┌─ Password gerada — GUARDA-A AGORA (não é mostrada outra vez) ─┐")
+			fmt.Printf("  │  %-58s │\n", gen)
+			fmt.Println("  └──────────────────────────────────────────────────────────────┘")
+			fmt.Println()
+			return gen
+		}
+
+		fmt.Print("Confirm password: ")
+		_ = exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+		pw2 := read()
+		_ = exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+		fmt.Println()
+
+		if pw1 != pw2 {
+			fmt.Println("Passwords don't match, try again.")
+			continue
+		}
+		return pw1
 	}
 }
 

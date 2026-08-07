@@ -162,7 +162,7 @@ func runWizard() error {
 	// stored. Default off.
 	c.Modules.Sentinel = prompt.Confirm("Install Sentinel monitoring agent?", false)
 	if c.Modules.Sentinel {
-		c.Sentinel.CentralURL = prompt.Ask("Sentinel central URL", sentinel.DefaultCentralURL)
+		c.Sentinel.CentralURL = sentinel.NormalizeCentral(prompt.Ask("Sentinel central URL", sentinel.DefaultCentralURL))
 	}
 
 	c.SetPath(cfgFile)
@@ -175,7 +175,8 @@ func runWizard() error {
 	fmt.Printf("\nConfig written to %s\n", cfgFile)
 	fmt.Println()
 	fmt.Println("Notes:")
-	fmt.Println("  • SSH password is requested at user creation time (not stored on disk).")
+	fmt.Println("  • SSH password is requested at user creation time (not stored on disk);")
+	fmt.Println("    press Enter there to auto-generate a strong random one.")
 	fmt.Println("  • IP whitelist is managed via `erp24 port allow` (UFW is the source of truth).")
 	return nil
 }
