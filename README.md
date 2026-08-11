@@ -457,18 +457,33 @@ DOCKER-USER → ufw-user-forward (regras "ufw route allow ...")
 Resultado: container que faz `-p 5432:5432` está **fechado** ao mundo
 até dares regra explícita.
 
-Fluxo típico:
+> **⚠ A porta que abres é a DO CONTAINER, não a publicada.** O docker faz
+> DNAT da porta publicada → porta do container **antes** da cadeia
+> FORWARD/DOCKER-USER, por isso a regra `ufw route allow ...` vê o destino já
+> reescrito. Com `-p 3307:3306`, **ligas na 3307** mas a **regra de firewall
+> é na 3306**. Quando os números são iguais (`-p 5432:5432`) não notas; com
+> mapeamento diferente tens de usar o do container.
+
+Fluxo típico (MySQL, publicada 3307 → container 3306):
 
 ```bash
-docker run -d -p 5432:5432 postgres:16
+docker run -d -p 0.0.0.0:3307:3306 mysql:8.4    # IPv4-only (ver Pitfalls)
 # (porta fechada ao mundo — DOCKER-USER DROP por defeito)
 
-sudo erp24 port add 5432/tcp postgres           # kind=docker (default)
-sudo erp24 port allow 5432/tcp 1.2.3.4          # só 1.2.3.4 entra
+sudo erp24 port add 3306/tcp mysql              # porta DO CONTAINER (3306!)
+sudo erp24 port allow 3306/tcp 1.2.3.4          # só 1.2.3.4; liga-se via :3307
 ```
 
 ### Pitfalls
 
+- **Regra de firewall = porta do CONTAINER, não a publicada** (ver caixa
+  acima). `-p 3307:3306` → abres a `3306`, ligas na `3307`. Usar a porta
+  publicada não bate em nada (o pacote já foi DNAT).
+- **Publica em IPv4-only** (`-p 0.0.0.0:3307:3306`). O bloco DOCKER-USER só
+  existe em `after.rules` (**IPv4**). Uma porta publicada em IPv6 — `[::]:3307`,
+  que o docker adiciona **por defeito** — **não** é coberta pelo DROP e fica
+  **aberta ao mundo**. Até haver bloco `after6.rules`, força IPv4 com o prefixo
+  `0.0.0.0:`. Confirma com `docker ps` (não deve aparecer `[::]:...`).
 - **Não** adiciones users ao grupo `docker`. É equivalente a root sem audit
   trail. Se um operador precisa de docker, dá-lhe root login mesmo.
 - Para serviço **host** (não-container) que escuta no host, usa

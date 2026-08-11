@@ -251,12 +251,23 @@ func portRemove(port int, proto string) error {
 	if err != nil {
 		return err
 	}
-	kind := kindOf(st, port, proto)
-	if kindIsOpenToAll(kind, port, proto) {
-		_ = kindDeleteAllow(kind, port, proto)
+	// Tenta remover em AMBAS as cadeias (docker/FWD + host/INPUT). Apagar uma
+	// regra inexistente é inócuo; isto cobre o caso de o state ter perdido a
+	// porta ou o kind ter desincronizado do UFW (senão a regra fica órfã).
+	for _, kind := range []string{state.KindDocker, state.KindHost} {
+		if kindIsOpenToAll(kind, port, proto) {
+			_ = kindDeleteAllow(kind, port, proto)
+		}
+		for _, ip := range kindSpecificSources(kind, port, proto) {
+			_ = kindDeleteAllowFrom(kind, ip, port, proto)
+		}
 	}
-	for _, ip := range kindSpecificSources(kind, port, proto) {
-		_ = kindDeleteAllowFrom(kind, ip, port, proto)
+	// Confirma que o UFW ficou MESMO sem regras antes de mexer no state — não
+	// mentir com "removida" se o delete falhou (era o bug do route delete).
+	if ufw.IsOpenToAll(port, proto) || ufw.IsRouteOpenToAll(port, proto) ||
+		len(ufw.SpecificSources(port, proto)) > 0 || len(ufw.RouteSpecificSources(port, proto)) > 0 {
+		return fmt.Errorf("porta %d/%s ainda tem regras no UFW após remover — "+
+			"corre 'sudo ufw status numbered' e apaga por número", port, proto)
 	}
 	if st.RemovePort(port, proto) {
 		if err := st.Save(); err != nil {

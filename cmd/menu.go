@@ -280,20 +280,22 @@ func systemMenu() error {
 func networkMenu(admin bool) func() error {
 	return func() error {
 		for {
-			labels := []string{"List ports"}
+			labels := []string{"Ver portas + estado"}
 			actions := []func() error{showOverview}
 
 			if admin {
 				labels = append(labels,
-					"Add port",
-					"Remove port",
-					"Allow IP on port",
-					"Revoke IP from port",
-					"Allow IP on all ports",
-					"Revoke IP from all ports",
+					"Abrir porta a 1+ IP (bloqueia o resto)",
+					"Abrir porta a TODOS (Anywhere)",
+					"Fechar porta (remove todas as regras)",
+					"Adicionar IP a uma porta",
+					"Remover IP de uma porta",
+					"Adicionar IP a TODAS as portas",
+					"Remover IP de TODAS as portas",
 				)
 				actions = append(actions,
-					interactivePortAdd,
+					interactivePortOpenIP,
+					interactivePortOpenAll,
 					interactivePortRemove,
 					interactivePortAllow,
 					interactivePortRevoke,
@@ -405,18 +407,71 @@ func runValidateAndMaybeFix(admin bool) error {
 
 // --- interactive helpers used by networkMenu ---
 
-func interactivePortAdd() error {
-	spec := prompt.Ask("PORT/PROTO (e.g. 3306/tcp)", "")
+// askPortProtoLabel colhe PORT/PROTO + label, partilhado pelos processos de
+// abrir porta. Devolve ok=false se o utilizador cancelar (spec vazia) ou a
+// spec for inválida.
+func askPortProtoLabel() (port int, proto, label string, ok bool) {
+	// Armadilha comum: em portas de container o firewall atua na porta DO
+	// CONTAINER, não na publicada. `docker run -p 3307:3306` → o pacote é
+	// DNAT para 3306 ANTES da cadeia FORWARD/DOCKER-USER, por isso a regra
+	// tem de ser 3306 (destino), não 3307. Ligas ao 3307; abres o 3306.
+	fmt.Println("Nota: para portas de container (docker -p PUBLICA:CONTAINER),")
+	fmt.Println("      indica a porta DO CONTAINER — é a que o firewall vê após o DNAT.")
+	fmt.Println("      Ex.: -p 3307:3306 → aqui metes 3306 (ligas na 3307).")
+	spec := prompt.Ask("PORT/PROTO (ex. 3306/tcp)", "")
 	if spec == "" {
-		return nil
+		return 0, "", "", false
 	}
 	port, proto, err := parsePortProto(spec)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 0, "", "", false
+	}
+	label = prompt.Ask("Label", spec)
+	return port, proto, label, true
+}
+
+// interactivePortOpenIP — processo SEGURO (default no menu): regista a porta
+// SEM abrir (restrict=true) e abre-a só aos IP/CIDR indicados. Nunca passa
+// pelo estado "Anywhere". Sem IPs = porta fica FECHADA (avisa).
+func interactivePortOpenIP() error {
+	port, proto, label, ok := askPortProtoLabel()
+	if !ok {
+		return nil
+	}
+	if err := portAdd(port, proto, label, state.KindDocker, true); err != nil {
 		return err
 	}
-	label := prompt.Ask("Label", spec)
-	// Caso comum: expor porta de container, aberta a todos. Menu assume isso.
-	// host services (--host) e restrição por-IP (--restrict) ficam via CLI.
+	added := 0
+	for {
+		ip := prompt.AskIPOrCIDR("IP/CIDR a permitir (vazio termina)")
+		if ip == "" {
+			break
+		}
+		if err := portAllow(port, proto, ip); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			continue
+		}
+		added++
+	}
+	if added == 0 {
+		fmt.Printf("Porta %d/%s registada mas FECHADA (sem IPs). "+
+			"Usa 'Adicionar IP a uma porta' para abrir.\n", port, proto)
+	}
+	return nil
+}
+
+// interactivePortOpenAll — abre a porta a TODA a Internet (Anywhere). Caso
+// raro/perigoso → confirmação explícita.
+func interactivePortOpenAll() error {
+	port, proto, label, ok := askPortProtoLabel()
+	if !ok {
+		return nil
+	}
+	if !prompt.Confirm(fmt.Sprintf("Abrir %d/%s a TODA a Internet (Anywhere)?", port, proto), false) {
+		fmt.Println("Cancelado.")
+		return nil
+	}
 	return portAdd(port, proto, label, state.KindDocker, false)
 }
 

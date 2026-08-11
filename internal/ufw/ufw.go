@@ -229,8 +229,11 @@ func RouteAllowFrom(ip string, port int, proto, comment string) error {
 }
 
 // RouteDeleteAllowFrom removes a "route allow proto P from IP to any port N" rule.
+// UFW route rules are deleted with `ufw route delete allow ...` — the `delete`
+// keyword goes AFTER `route`. `ufw delete route allow ...` is NOT valid and
+// silently fails, leaving docker/FWD rules undeletable.
 func RouteDeleteAllowFrom(ip string, port int, proto string) error {
-	return runner.Run("ufw", "delete", "route", "allow",
+	return runner.Run("ufw", "route", "delete", "allow",
 		"proto", proto,
 		"from", ip,
 		"to", "any",
@@ -239,7 +242,7 @@ func RouteDeleteAllowFrom(ip string, port int, proto string) error {
 
 // RouteDeleteAllow removes the "Anywhere" route allow rule for PORT/proto.
 func RouteDeleteAllow(port int, proto string) error {
-	return runner.Run("ufw", "delete", "route", "allow",
+	return runner.Run("ufw", "route", "delete", "allow",
 		"proto", proto,
 		"from", "any",
 		"to", "any",
