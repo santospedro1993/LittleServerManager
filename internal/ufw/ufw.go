@@ -296,6 +296,12 @@ const dockerBlockBody = `# BEGIN ERP24-DOCKER
 *filter
 :ufw-user-forward - [0:0]
 :DOCKER-USER - [0:0]
+# Deixa passar o tráfego de RESPOSTA de ligações já estabelecidas ANTES do
+# DROP final. Sem isto, o SYN-ACK das ligações de SAÍDA dos containers (origem
+# pública, não-LAN) caía no DROP → todo o outbound TCP dos containers dava
+# timeout (ex.: Traefik a obter certificado ACME). O DROP continua a fechar
+# ligações NOVAS de entrada a portas publicadas não autorizadas.
+-A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 -A DOCKER-USER -j ufw-user-forward
 -A DOCKER-USER -j RETURN -s 10.0.0.0/8
 -A DOCKER-USER -j RETURN -s 172.16.0.0/12
